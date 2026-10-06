@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data aplikasi lokal: akun (hash kata sandi), watchlist, log, set hasil impor.
+# Dibuat ulang otomatis saat aplikasi pertama kali dijalankan.
+data/
+
+# Berkas sementara Office / editor
+~$*
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Konfigurasi lokal Claude Code / IDE
+.claude/
+.vscode/
+.idea/

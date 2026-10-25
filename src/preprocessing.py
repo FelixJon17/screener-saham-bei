@@ -1,12 +1,9 @@
 """
 src/preprocessing.py
-Rekonstruksi pra-pemrosesan notebook (sel 2–8) dari dataset mentah.
-
-Hasilnya TIDAK dipakai untuk clustering -- label tetap diambil dari
-hasil_clustering.xlsx. Rekonstruksi ini ada untuk dua hal:
-  1. menampilkan jejak 960 → 959 → 627 beserta baris yang dibuang, dan
-  2. memverifikasi bahwa tabel hasil notebook memang berasal dari dataset
-     mentah yang sama (lihat pipeline.verify).
+Pra-pemrosesan sesuai notebook (3.1.2–3.1.3): koreksi sektor, buang nilai
+kosong, (data positif) buang PER/PBV <= 0, winsorizing, lalu Z-score PER dan
+PBV per sektor. Dipakai src/trainer.py dan ditampilkan sebagai jejak
+pra-pemrosesan di halaman admin.
 """
 from __future__ import annotations
 
@@ -69,16 +66,24 @@ def drop_non_positive(df: pd.DataFrame, res: PreprocessResult) -> pd.DataFrame:
     return out
 
 
-def winsorize(df: pd.DataFrame, res: PreprocessResult) -> pd.DataFrame:
-    """Sel 6 notebook: upper-only P95 market-wide (np.percentile, interpolasi linear)."""
+def winsorize(df: pd.DataFrame, res: PreprocessResult, lower: int | None = None) -> pd.DataFrame:
+    """
+    Sel winsorizing notebook: P95 market-wide (np.percentile, interpolasi linear).
+    lower diisi (mis. 5) untuk konfigurasi data "semua": winsorizing dua sisi.
+    """
     out = df.copy()
     for col in config.CLUSTER_FEATURES:
         cap = float(np.percentile(out[col], config.WINSOR_PERCENTILE))
+        floor = float(np.percentile(out[col], lower)) if lower else -np.inf
         res.winsor_caps[col] = {"persentil": config.WINSOR_PERCENTILE, "batas_atas": cap,
-                                "n_dipotong": int((out[col] > cap).sum())}
-        out[f"{col}_w"] = np.minimum(out[col], cap)
+                                "n_dipotong": int(((out[col] > cap) | (out[col] < floor)).sum())}
+        if lower:
+            res.winsor_caps[col]["batas_bawah"] = floor
+        out[f"{col}_w"] = np.clip(out[col], floor, cap)
     total = sum(v["n_dipotong"] for v in res.winsor_caps.values())
-    _record(res, f"Winsorizing P{config.WINSOR_PERCENTILE} (PER, PBV)", len(df), len(out),
+    nama = (f"Winsorizing P{lower}–P{config.WINSOR_PERCENTILE}" if lower
+            else f"Winsorizing P{config.WINSOR_PERCENTILE}")
+    _record(res, f"{nama} (PER, PBV)", len(df), len(out),
             f"{total} nilai dipotong; tidak ada baris dihapus")
     return out
 
@@ -100,13 +105,16 @@ def sector_zscore(df: pd.DataFrame, res: PreprocessResult) -> pd.DataFrame:
     return out
 
 
-def run(df_raw: pd.DataFrame) -> PreprocessResult:
+def run(df_raw: pd.DataFrame, data_mode: str = config.DATA_POSITIF) -> PreprocessResult:
+    """data_mode "positif": buang PER/PBV <= 0; "semua": pertahankan, winsorizing dua sisi."""
     res = PreprocessResult(data=pd.DataFrame())
     _record(res, "Data mentah", len(df_raw), len(df_raw), "Sebelum pra-pemrosesan")
     df = fix_sectors(df_raw, res)
     df = drop_missing(df, res)
-    df = drop_non_positive(df, res)
-    df = winsorize(df, res)
+    if data_mode == config.DATA_POSITIF:
+        df = drop_non_positive(df, res)
+    lower = config.WINSOR_LOWER_PERCENTILE if data_mode == config.DATA_SEMUA else None
+    df = winsorize(df, res, lower)
     df = sector_zscore(df, res)
     res.data = df
     return res

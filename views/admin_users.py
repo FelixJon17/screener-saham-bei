@@ -17,7 +17,7 @@ from src import auth, db, ui
 
 @st.dialog("Hapus pengguna?", icon=":material/person_remove:")
 def _confirm_delete(username: str) -> None:
-    st.write(f"Akun **{username}** beserta watchlist-nya akan dihapus permanen.")
+    st.write(f"Akun **{username}** akan dihapus permanen.")
     a, b = st.columns(2)
     if a.button("Batal", width="stretch"):
         st.rerun()
@@ -53,8 +53,8 @@ def render() -> None:
     n_admin = int((users["role"] == config.ROLE_ADMIN).sum())
     ui.stat_cards([
         {"label": "Total akun", "value": len(users)},
-        {"label": "Admin", "value": n_admin, "color": "#D97706"},
-        {"label": "Pengguna", "value": len(users) - n_admin, "color": "#16A34A"},
+        {"label": "Admin", "value": n_admin, "color": config.PERI},
+        {"label": "Pengguna", "value": len(users) - n_admin, "color": config.ROYAL},
         {"label": "Nonaktif", "value": int((users["is_active"] == 0).sum()),
          "color": "#DC2626"},
     ])
@@ -80,12 +80,11 @@ def render() -> None:
             role=view["role"].map(config.ROLE_LABEL),
             is_active=view["is_active"].map(lambda v: "Aktif" if v else "Nonaktif"),
         )
-        st.dataframe(
+        ui.table(
             view, hide_index=True, width="stretch", height=420,
             column_config={
                 "username": "Username", "full_name": "Nama lengkap", "role": "Peran",
                 "is_active": "Status", "created_at": "Terdaftar", "last_login": "Masuk terakhir",
-                "n_watchlist": st.column_config.NumberColumn("Watchlist", format="%d"),
             },
         )
 
@@ -170,7 +169,6 @@ def render() -> None:
             st.markdown("**Ringkasan**")
             st.caption(f"Terdaftar: {row['created_at']}")
             st.caption(f"Masuk terakhir: {row['last_login'] or '-'}")
-            st.caption(f"Watchlist: {int(row['n_watchlist'])} saham")
             if st.button("Hapus akun", icon=":material/delete:", type="secondary",
                          disabled=target == me, width="stretch"):
                 _confirm_delete(target)

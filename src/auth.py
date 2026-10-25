@@ -10,13 +10,19 @@ Autentikasi dan otorisasi berbasis peran (admin / user).
   sehingga akun yang dinonaktifkan atau diubah perannya oleh admin langsung
   berlaku tanpa menunggu pengguna keluar.
 
-Batasan yang perlu dinyatakan jujur di skripsi: sesi disimpan di memori
-Streamlit (st.session_state), tidak ada HTTPS bawaan, dan tidak ada
+- Sesi login disimpan di st.session_state dan, agar tidak hilang saat halaman
+  dimuat ulang (mis. ganti mode terang/gelap), juga sebagai cookie berisi
+  token bertanda tangan HMAC-SHA256 yang berlaku SESSION_DAYS hari. Token ikut
+  batal bila kata sandi diganti.
+
+Batasan yang perlu dinyatakan jujur di skripsi: cookie diset lewat
+JavaScript (bukan HttpOnly), tidak ada HTTPS bawaan, dan tidak ada
 pemulihan kata sandi lewat surel. Ini cukup untuk pembatasan akses aplikasi
 analisis, bukan sistem keamanan tingkat produksi.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import re
@@ -31,6 +37,12 @@ from src import db
 KEY_USER = "auth_user"
 KEY_FAILS = "auth_fail_count"
 KEY_LOCK_UNTIL = "auth_lock_until"
+KEY_COOKIE_SET = "_auth_cookie_set"       # token yang menunggu ditulis ke cookie
+KEY_COOKIE_CLEAR = "_auth_cookie_clear"   # cookie menunggu dihapus
+KEY_NO_RESTORE = "_auth_no_restore"       # sudah keluar: abaikan cookie lama
+
+COOKIE = "ssb_session"
+SESSION_DAYS = 7
 
 USERNAME_RE = re.compile(r"^[a-z0-9_.]{3,20}$")
 
@@ -66,6 +78,65 @@ def init() -> bool:
     """Menyiapkan basis data sekali per proses server."""
     db.init(hash_password)
     return True
+
+
+# --------------------------------------------------------------------------
+# Sesi lewat cookie
+# --------------------------------------------------------------------------
+def _secret() -> bytes:
+    key = db.get_setting("session_secret")
+    if not key:
+        key = secrets.token_hex(32)
+        db.set_setting("session_secret", key)
+    return key.encode()
+
+
+def _sign(username: str, exp: int, password_hash: str) -> str:
+    msg = f"{username}|{exp}|{password_hash}".encode()
+    return hmac.new(_secret(), msg, hashlib.sha256).hexdigest()
+
+
+def _make_token(row: dict) -> str:
+    exp = int(time.time()) + SESSION_DAYS * 86400
+    u = base64.urlsafe_b64encode(row["username"].encode()).decode().rstrip("=")
+    return f"{u}.{exp}.{_sign(row['username'], exp, row['password_hash'])}"
+
+
+def _read_token(token: str) -> dict | None:
+    try:
+        u, exp, sig = token.split(".")
+        username = base64.urlsafe_b64decode(u + "=" * (-len(u) % 4)).decode()
+        exp = int(exp)
+    except (ValueError, TypeError, UnicodeDecodeError):
+        return None
+    if exp < time.time():
+        return None
+    row = db.get_user(username)
+    if not row or not row["is_active"]:
+        return None
+    if not hmac.compare_digest(sig, _sign(username, exp, row["password_hash"])):
+        return None
+    return row
+
+
+def restore_session() -> None:
+    """Memulihkan login dari cookie bila sesi Streamlit masih kosong."""
+    if current_user() or st.session_state.get(KEY_NO_RESTORE):
+        return
+    token = st.context.cookies.get(COOKIE)
+    row = _read_token(token) if token else None
+    if row:
+        st.session_state[KEY_USER] = _public(row)
+
+
+def sync_cookie() -> None:
+    """Menulis atau menghapus cookie sesi yang tertunda (dipanggil app.py)."""
+    from src import theme
+    if token := st.session_state.pop(KEY_COOKIE_SET, None):
+        theme.run_js(f"document.cookie='{COOKIE}={token}; path=/; "
+                     f"max-age={SESSION_DAYS * 86400}; SameSite=Strict';")
+    if st.session_state.pop(KEY_COOKIE_CLEAR, None):
+        theme.run_js(f"document.cookie='{COOKIE}=; path=/; max-age=0; SameSite=Strict';")
 
 
 # --------------------------------------------------------------------------
@@ -112,6 +183,7 @@ def refresh_session() -> None:
     fresh = db.get_user(u["username"])
     if not fresh or not fresh["is_active"]:
         st.session_state.pop(KEY_USER, None)
+        st.session_state[KEY_COOKIE_CLEAR] = True
         st.session_state["auth_notice"] = "Akun Anda dinonaktifkan atau dihapus oleh admin."
         return
     st.session_state[KEY_USER] = _public(fresh)
@@ -125,8 +197,11 @@ def lock_remaining() -> int:
     return max(0, int(st.session_state.get(KEY_LOCK_UNTIL, 0) - time.time()))
 
 
-def login(username: str, password: str) -> None:
-    """Melempar AuthError bila gagal; mengisi sesi bila berhasil."""
+def login(username: str, password: str, role: str | None = None) -> None:
+    """
+    Melempar AuthError bila gagal; mengisi sesi bila berhasil. Bila `role`
+    diisi (dari pilihan Pengguna/Admin di halaman login), peran akun harus sama.
+    """
     if lock_remaining():
         raise AuthError(f"Terlalu banyak percobaan. Coba lagi dalam {lock_remaining()} detik.")
 
@@ -142,9 +217,14 @@ def login(username: str, password: str) -> None:
         raise AuthError("Nama pengguna atau kata sandi salah.")
     if not row["is_active"]:
         raise AuthError("Akun ini sedang dinonaktifkan. Hubungi admin.")
+    if role and row["role"] != role:
+        raise AuthError("Akun ini bukan akun admin." if role == config.ROLE_ADMIN
+                        else "Akun admin, silakan masuk lewat pilihan Admin.")
 
     st.session_state[KEY_FAILS] = 0
     st.session_state[KEY_USER] = _public(row)
+    st.session_state[KEY_COOKIE_SET] = _make_token(row)
+    st.session_state.pop(KEY_NO_RESTORE, None)
     db.update_user(username, last_login=db.now())
     db.log(username, "Masuk", config.ROLE_LABEL[row["role"]])
 
@@ -162,6 +242,8 @@ def logout() -> None:
         db.log(u["username"], "Keluar")
     for key in list(st.session_state.keys()):
         del st.session_state[key]
+    st.session_state[KEY_COOKIE_CLEAR] = True
+    st.session_state[KEY_NO_RESTORE] = True
 
 
 # --------------------------------------------------------------------------
@@ -194,6 +276,8 @@ def change_own_password(old: str, new: str, confirm: str) -> None:
     validate_password(new, confirm)
     db.update_user(row["username"], password_hash=hash_password(new))
     db.log(row["username"], "Ganti kata sandi")
+    # Token lama ikut batal karena hash berubah; terbitkan token baru.
+    st.session_state[KEY_COOKIE_SET] = _make_token(db.get_user(row["username"]))
 
 
 def admin_reset_password(target: str, new: str) -> None:

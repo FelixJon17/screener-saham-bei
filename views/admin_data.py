@@ -1,25 +1,29 @@
 """
 views/admin_data.py -- Kelola Data & Model (khusus admin)
 
-Aplikasi tidak melatih model sendiri. Admin mengimpor berkas hasil notebook
-(folder output_revisi/), memilih set hasil yang aktif, dan mengekspor hasil
-ke Excel. Semua perubahan di sini berlaku global untuk seluruh pengguna.
+Seluruh hasil dihitung langsung dari dataset (src/pipeline.py). Admin
+memilih data perhitungan (positif / seluruh data), mengunggah dataset global
+pengganti dataset penelitian, dan mengekspor hasil ke Excel. Semua perubahan
+di sini berlaku global untuk seluruh pengguna.
+
+Tab "Pra-pemrosesan" dan "Verifikasi" menampilkan rekonstruksi
+pra-pemrosesan notebook dan pemeriksaan konsistensi hasil.
 """
 from __future__ import annotations
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 import config
-from src import auth, dataset_store, db, export, ui
+from src import auth, data_loader, dataset_store, db, export, pipeline, trainer, ui
 
 KEY_UPLOADER = "upload_counter"
 
 
-@st.dialog("Hapus set hasil?", icon=":material/delete:")
+@st.dialog("Hapus dataset?", icon=":material/delete:")
 def _confirm_delete(ds_id: int, nama: str) -> None:
-    st.write(f"Set hasil **{nama}** beserta seluruh berkasnya akan dihapus permanen dari "
-             "server. Tindakan ini tidak dapat dibatalkan.")
+    st.write(f"Dataset **{nama}** akan dihapus permanen dari server.")
     a, b = st.columns(2)
     if a.button("Batal", width="stretch"):
         st.rerun()
@@ -30,53 +34,48 @@ def _confirm_delete(ds_id: int, nama: str) -> None:
 
 
 def _tab_impor(actor: str) -> None:
-    st.caption("Unggah isi folder `output_revisi/` dan dataset mentah (opsional).")
-    st.dataframe(pd.DataFrame(
-        [(n, "wajib") for n in config.ARTIFACTS_REQUIRED]
-        + [(n, "opsional") for n in config.ARTIFACTS_OPTIONAL]
-        + [("Dataset mentah (.xlsx/.csv, nama bebas)", "opsional")],
-        columns=["Berkas", "Status"]), hide_index=True, width="stretch")
-
-    files = st.file_uploader(
-        "Pilih berkas hasil notebook", type=["xlsx", "csv", "joblib"],
-        accept_multiple_files=True,
-        key=f"uploader_{st.session_state.get(KEY_UPLOADER, 0)}")
-    if not files:
+    st.caption("Unggah dataset global (Excel/CSV: Kode Saham, Sektor, PER, PBV, ROE, DER) "
+               "untuk menggantikan dataset penelitian bagi seluruh pengguna.")
+    f = st.file_uploader("Dataset", type=["xlsx", "csv"], label_visibility="collapsed",
+                         key=f"uploader_{st.session_state.get(KEY_UPLOADER, 0)}")
+    if not f:
         return
-
-    names = [f.name for f in files]
-    kurang = [n for n in config.ARTIFACTS_REQUIRED if n not in names]
-    mentah = [n for n in names if n not in config.ARTIFACT_NAMES and not n.endswith(".joblib")]
-    c = st.columns(3)
-    c[0].metric("Berkas dipilih", len(files), border=True)
-    c[1].metric("Berkas wajib", f"{3 - len(kurang)} / 3", border=True)
-    c[2].metric("Dataset mentah", mentah[0] if mentah else "—", border=True)
-    if kurang:
-        st.error("Berkas wajib belum ada: " + ", ".join(kurang), icon=":material/error:")
+    try:
+        raw = trainer.read_file(f.getvalue(), f.name)
+    except Exception as e:  # format rusak, lembar kosong, terlalu besar
+        st.error(f"Berkas tidak dapat dibaca: {e}", icon=":material/error:")
         return
-    if len(mentah) > 1:
-        st.error("Hanya boleh satu dataset mentah. Ditemukan: " + ", ".join(mentah),
-                 icon=":material/error:")
-        return
+    guess = trainer.guess_columns(raw.columns)
+    opsi = [None, *raw.columns]
+    with st.expander(f"Pemetaan kolom · {sum(v is not None for v in guess.values())}/6 "
+                     "terdeteksi", expanded=None in guess.values(), icon=":material/swap_horiz:"):
+        cols = st.columns(3)
+        mapping = {
+            c: cols[i % 3].selectbox(
+                c, opsi, index=opsi.index(guess[c]) if guess[c] is not None else 0,
+                format_func=lambda v: "— pilih kolom —" if v is None else str(v),
+                key=f"impor_map_{c}")
+            for i, c in enumerate(config.REQUIRED_COLUMNS)
+        }
+    ui.table(raw.head(5), hide_index=True, width="stretch", height=150)
 
-    st.warning("Impor hanya berkas .joblib dari notebook Anda sendiri.",
-               icon=":material/shield:")
-    a, b, _ = st.columns([2, 1.3, 1], vertical_alignment="bottom")
-    label = a.text_input("Nama set hasil", placeholder="mis. Data Oktober 2026")
+    a, b, c = st.columns([2, 1.2, 1], vertical_alignment="bottom")
+    label = a.text_input("Nama dataset", value=Path(f.name).stem[:60],
+                         placeholder="mis. Data Oktober 2026")
     aktifkan = b.checkbox("Langsung aktifkan", value=True)
-    if st.button("Impor & periksa", type="primary", icon=":material/upload:"):
+    if c.button("Simpan", type="primary", icon=":material/upload:", width="stretch"):
         try:
-            with st.spinner("Memuat model dan memeriksa konsistensi…"):
-                ds_id = dataset_store.save_upload(
-                    [(f.name, f.getvalue()) for f in files], label, actor)
-        except Exception as e:  # berkas rusak, versi scikit-learn berbeda, dsb.
-            st.error(f"Set hasil ditolak: {e}", icon=":material/error:")
+            df = trainer.prepare(raw, mapping)
+            with st.spinner("Menjalankan K-Means dan Random Forest…"):
+                ds_id = dataset_store.save_upload(df, label, f.name, actor)
+        except (trainer.TrainError, data_loader.SchemaError, pipeline.ArtifactError) as e:
+            st.error(f"Dataset ditolak: {e}", icon=":material/error:")
             return
         if aktifkan:
             dataset_store.activate(ds_id, actor)
             ui.clear_pipeline_cache()
         st.session_state[KEY_UPLOADER] = st.session_state.get(KEY_UPLOADER, 0) + 1
-        st.toast("Set hasil diimpor" + (" dan diaktifkan" if aktifkan else ""),
+        st.toast("Dataset disimpan" + (" dan diaktifkan" if aktifkan else ""),
                  icon=":material/check_circle:")
         st.rerun()
 
@@ -84,60 +83,143 @@ def _tab_impor(actor: str) -> None:
 def _tab_riwayat(actor: str, ds) -> None:
     hist = db.list_datasets()
     if not ds.is_default:
-        if st.button("Kembali ke set bawaan", icon=":material/restore:"):
+        if st.button("Kembali ke dataset penelitian", icon=":material/restore:"):
             dataset_store.activate(None, actor)
             ui.clear_pipeline_cache()
             st.rerun()
     if hist.empty:
-        st.info(f"Belum ada impor. Memakai `{config.MODEL_DIR.name}/`.",
+        st.info(f"Belum ada dataset global. Memakai `{config.DEFAULT_RAW_PATH.name}`.",
                 icon=":material/info:")
         return
     hist["Status"] = hist["id"].map(lambda i: "Aktif" if i == ds.id else "")
     show = hist[["id", "Status", "filename", "n_rows", "uploaded_by", "uploaded_at"]]
-    st.dataframe(show, hide_index=True, width="stretch",
-                 column_config={"id": "ID", "filename": "Nama set", "n_rows": "Saham",
-                                "uploaded_by": "Diimpor oleh", "uploaded_at": "Waktu"})
+    ui.table(show, hide_index=True, width="stretch",
+                 column_config={"id": "ID", "filename": "Nama dataset", "n_rows": "Saham",
+                                "uploaded_by": "Diunggah oleh", "uploaded_at": "Waktu"})
     opsi = dict(zip(hist["id"], hist["filename"]))
     a, b, c = st.columns([2, 1, 1], vertical_alignment="bottom")
-    pilih = a.selectbox("Pilih set hasil", list(opsi),
+    pilih = a.selectbox("Pilih dataset", list(opsi),
                         format_func=lambda i: f"#{i} — {opsi[i]}")
     if b.button("Aktifkan", icon=":material/check:", type="primary",
                 width="stretch", disabled=pilih == ds.id):
         dataset_store.activate(int(pilih), actor)
         ui.clear_pipeline_cache()
-        st.toast(f"Set hasil #{pilih} diaktifkan", icon=":material/check_circle:")
+        st.toast(f"Dataset #{pilih} diaktifkan", icon=":material/check_circle:")
         st.rerun()
     if c.button("Hapus", icon=":material/delete:", width="stretch"):
         _confirm_delete(int(pilih), opsi[pilih])
 
 
+def _tab_pra(p) -> None:
+    if p.pre is None:
+        st.info("Dataset mentah tidak tersedia.", icon=":material/info:")
+        return
+    log = p.pre.log_df()
+    st.markdown("**Rantai pra-pemrosesan**")
+    funnel = go.Figure(go.Funnel(
+        y=log["Tahap"], x=log["Baris sesudah"], textinfo="value+percent initial",
+        marker=dict(color=["#1B2CC1", "#1B2CC1", "#7692FF", "#ABD2FA", "#7692FF",
+                           "#ABD2FA"][: len(log)]),
+    ))
+    with st.container(border=True):
+        st.plotly_chart(ui.style_fig(funnel, 360, legend=False), width="stretch")
+    ui.table(log, width="stretch", hide_index=True)
+
+    a, b = st.columns(2)
+    with a:
+        st.markdown("**Koreksi sektor**")
+        ui.table(p.pre.sector_fixed, hide_index=True, width="stretch")
+    with b:
+        st.markdown(f"**Ambang winsorizing P{config.WINSOR_PERCENTILE} (PER, PBV)**")
+        ui.table(pd.DataFrame(p.pre.winsor_caps).T, width="stretch")
+
+    if p.sector_stats is not None:
+        st.markdown("**Statistik sektor (penyebut Z-score)**")
+        ui.table(p.sector_stats.round(4), width="stretch")
+
+    st.markdown("**Data mentah sebelum pembersihan**")
+    r = p.raw_summary
+    cc = st.columns(4)
+    cc[0].metric("Baris", r["n_baris"], border=True)
+    cc[1].metric("Kode unik", r["n_saham_unik"], border=True)
+    cc[2].metric("Kode duplikat", r["n_duplikat_kode"], border=True)
+    cc[3].metric("Nilai sektor unik (mentah)", r["n_sektor"], border=True)
+    if r["sektor_anomali"]:
+        st.caption("Nilai sektor di luar IDX-IC pada data mentah: "
+                   + ", ".join(r["sektor_anomali"])
+                   + ". Seluruhnya dikoreksi oleh notebook."
+                   if not r["sektor_anomali_setelah_koreksi"] else
+                   "Nilai sektor di luar IDX-IC yang masih tersisa setelah koreksi: "
+                   + ", ".join(r["sektor_anomali_setelah_koreksi"]))
+
+    if note := ui.missing_note(p):
+        st.info(note, icon=":material/info:")
+    for nama, buang in p.pre.dropped.items():
+        if len(buang):
+            with st.expander(f"Baris dibuang pada tahap: {nama} ({len(buang)})"):
+                ui.table(buang, width="stretch", hide_index=True)
+
+
+def _tab_verifikasi(p) -> None:
+    if p.all_checks_ok:
+        st.success("Seluruh pemeriksaan konsistensi lolos.", icon=":material/verified:")
+    else:
+        st.error("Ada pemeriksaan yang gagal.", icon=":material/error:")
+    ui.table(pd.DataFrame(p.checks), hide_index=True, width="stretch")
+    if p.source is not None and p.source.exists():
+        st.caption(f"Dataset: {p.source.name} · "
+                   f"{round(p.source.stat().st_size / 1024, 1)} KB · diubah "
+                   + pd.Timestamp(p.source.stat().st_mtime, unit="s").strftime("%Y-%m-%d %H:%M"))
+
+
+def _pilih_data(actor: str, ds) -> None:
+    """Konfigurasi data perhitungan K-Means dan Random Forest (set bawaan)."""
+    mode = dataset_store.data_mode()
+    with st.container(border=True):
+        a, b = st.columns([1.2, 2], vertical_alignment="center")
+        with a:
+            st.markdown("**Data perhitungan K-Means & Random Forest**")
+            st.caption("Berlaku untuk seluruh halaman dan pengguna.")
+        pilih = b.segmented_control(
+            "Data perhitungan", list(config.DATA_MODES), default=mode, key="data_mode_pick",
+            format_func=lambda m: config.DATA_MODES[m],
+            label_visibility="collapsed", width="stretch") or mode
+        if pilih != mode:
+            dataset_store.set_data_mode(pilih, actor)
+            ui.clear_pipeline_cache()
+            st.toast(config.DATA_MODES[pilih] + " digunakan", icon=":material/check_circle:")
+            st.rerun()
+
+
 def _tab_parameter(actor: str) -> None:
-    p = ui.get_pipeline()
-    st.caption("Dibaca dari model notebook. Ubah di notebook, lalu muat ulang.")
+    p = ui.get_pipeline(pribadi=False)
+    st.caption("Parameter perhitungan (sama dengan notebook).")
     prm = p.cls.params
-    st.dataframe(pd.DataFrame([
+    caps = p.cls.winsor_caps
+    rentang = (lambda v: f"{v} {caps[v + ' bawah']:.4f} s.d. {caps[v]:.4f}"
+               if f"{v} bawah" in caps else f"{v} {caps[v]:.4f}")
+    ui.table(pd.DataFrame([
+        ("Data perhitungan", f"{p.data_label} · {len(p.table)} saham"),
         ("Koreksi sektor", ", ".join(f"{k} → {v}" for k, v in config.SECTOR_FIXES.items())),
-        ("Winsorizing PER/PBV", f"P{config.WINSOR_PERCENTILE} ekor atas, seluruh data"),
+        ("Winsorizing PER/PBV", f"{ui.winsor_text(p)}, seluruh data"),
         ("Standardisasi", f"Z-score per sektor, ddof={config.ZSCORE_DDOF}"),
         ("K-Means", f"k={p.k}, n_init={p.clu.model.n_init}, "
                     f"random_state={p.clu.model.random_state}"),
-        ("Winsorizing ROE/DER", f"P{config.WINSOR_PERCENTILE} dari data latih "
-                                f"(ROE {p.cls.winsor_caps['ROE']:.4f}, "
-                                f"DER {p.cls.winsor_caps['DER']:.4f})"),
+        ("Winsorizing ROE/DER", f"{ui.winsor_text(p)}, seluruh data "
+                                f"({rentang('ROE')}; {rentang('DER')})"),
         ("Random Forest", ", ".join(f"{k}={v}" for k, v in prm.items())),
         ("Pembagian data", f"uji {int(config.TEST_SIZE * 100)}%, stratified, "
                            f"random_state={config.SPLIT_RANDOM_STATE}"),
-        ("Tuning", f"GridSearchCV {config.GRID_CV_FOLDS}-fold, scoring=f1_macro"),
-        ("Evaluasi stabilitas", f"Repeated Stratified K-Fold {config.REPEATED_CV}"),
+        ("Penyetelan hiperparameter", "Tidak dilakukan (data uji dipakai sekali)"),
     ], columns=["Parameter", "Nilai"]), hide_index=True, width="stretch")
-    if st.button("Muat ulang hasil notebook", icon=":material/refresh:"):
+    if st.button("Hitung ulang", icon=":material/refresh:"):
         ui.clear_pipeline_cache()
-        db.log(actor, "Muat ulang hasil notebook")
+        db.log(actor, "Hitung ulang hasil")
         st.rerun()
 
 
 def _tab_ekspor() -> None:
-    p = ui.get_pipeline()
+    p = ui.get_pipeline(pribadi=False)
     st.caption("Seluruh hasil dalam satu berkas Excel bersheet banyak.")
     st.download_button(
         "Unduh Excel hasil lengkap", data=lambda: export.excel_bytes(p),
@@ -155,26 +237,29 @@ def _tab_ekspor() -> None:
 def render() -> None:
     actor = auth.current_user()["username"]
     ds = dataset_store.active()
-    p = ui.get_pipeline()
+    p = ui.get_pipeline(pribadi=False)
 
     ok = p.all_checks_ok
     ui.market_header(
         "Data & Model",
-        f"Sumber data screener untuk seluruh pengguna · {ui.esc(ds.label)}",
+        f"Sumber data screener untuk seluruh pengguna · {ui.esc(ds.label)} · "
+        f"{ui.esc(p.data_label)}",
         [("Emiten", str(len(p.table)), None),
          ("Cluster", str(p.k), None),
          ("Verifikasi", "Lolos" if ok else "Gagal", "#16A34A" if ok else "#DC2626"),
-         ("Riwayat impor", str(len(db.list_datasets())), None)],
+         ("Dataset global", str(len(db.list_datasets())), None)],
     )
     st.write("")
+    _pilih_data(actor, ds)
 
-    t1, t2, t3, t4 = st.tabs([":material/upload: Impor", ":material/history: Riwayat",
-                              ":material/tune: Parameter", ":material/download: Ekspor"])
-    with t1:
-        _tab_impor(actor)
-    with t2:
-        _tab_riwayat(actor, ds)
-    with t3:
-        _tab_parameter(actor)
-    with t4:
-        _tab_ekspor()
+    tabs = st.tabs([":material/upload: Unggah dataset", ":material/history: Riwayat",
+                    ":material/filter_alt: Pra-pemrosesan", ":material/verified: Verifikasi",
+                    ":material/tune: Parameter", ":material/download: Ekspor"],
+                   key="data_tab", on_change="rerun")
+    isi = [lambda: _tab_impor(actor), lambda: _tab_riwayat(actor, ds),
+           lambda: _tab_pra(p),
+           lambda: _tab_verifikasi(p), lambda: _tab_parameter(actor), _tab_ekspor]
+    for tab, fn in zip(tabs, isi):
+        if tab.open:
+            with tab:
+                fn()

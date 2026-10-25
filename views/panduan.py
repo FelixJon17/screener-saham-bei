@@ -11,11 +11,11 @@ import config
 from src import auth, ui
 
 LANGKAH = [
-    ("Data", "PER, PBV, ROE, DER, dan sektor setiap emiten BEI."),
-    ("Bersihkan", "Buang data kosong dan PER/PBV ≤ 0; batasi nilai ekstrem di "
+    ("Input Data", "Kode Saham, Sektor, PER, PBV, ROE, dan DER setiap emiten BEI."),
+    ("Pra-Pemrosesan Data", "Buang data kosong dan PER/PBV ≤ 0; batasi nilai ekstrem di "
                   f"P{config.WINSOR_PERCENTILE}."),
     ("Relatif sektor", "PER dan PBV diubah menjadi Z-score terhadap sektornya."),
-    ("Kelompokkan", "K-Means membagi emiten ke 3 kategori valuasi relatif."),
+    ("Pengelompokan", "K-Means Clustering menjadi 3 kategori valuasi relatif."),
     ("Karakterisasi", "Random Forest menguji apakah ROE dan DER menjelaskan kategori."),
 ]
 
@@ -39,18 +39,20 @@ GLOSARIUM = {
 }
 
 FAQ = {
-    "Apakah Relatif Rendah berarti layak beli?":
-        "Tidak. Artinya PER dan PBV rendah dibanding sektornya. Gunakan sebagai titik awal "
-        "riset, bukan keputusan akhir.",
+    "Apakah Relatif Rendah (Undervalue) berarti layak beli?":
+        "Tidak. Undervalue, Fair Value, dan Overvalue adalah label operasional: PER dan PBV "
+        "relatif terhadap rata-rata sektornya, bukan hasil perhitungan nilai intrinsik. "
+        "Gunakan sebagai titik awal riset, bukan keputusan akhir.",
     "Mengapa PER tinggi bisa masuk Relatif Rendah?":
         "Pembandingnya adalah sektor sendiri. Di sektor ber-PER tinggi, emiten itu tetap "
         "tergolong murah.",
-    "Apa arti Relatif Sedang?":
-        "Sinyal campuran. Pada data saat ini didominasi emiten dengan PER sangat tinggi "
-        "tetapi PBV setara sektor, bukan berarti 'wajar'.",
+    "Apa arti Relatif Sedang (Fair Value)?":
+        "Cluster dengan skor centroid di antara Rendah dan Tinggi. Pada data saat ini "
+        "didominasi emiten dengan PER sangat tinggi tetapi PBV setara sektor.",
     "Mengapa ada emiten yang tidak muncul?":
-        "Emiten dengan data tidak lengkap atau PER/PBV ≤ 0 (rugi atau ekuitas negatif) "
-        "dikeluarkan.",
+        "Emiten dengan data kosong, dan (pada data positif) PER/PBV ≤ 0, dikeluarkan. "
+        "Pada dataset penelitian, saham FREN tidak dimasukkan dalam perhitungan karena "
+        "tidak memiliki data PER, PBV, ROE, dan DER.",
     "Mengapa prediksi Random Forest bisa berbeda dari kategori?":
         "Random Forest hanya melihat ROE dan DER. Perbedaan berarti profil fundamentalnya "
         "tidak khas untuk kelompok valuasinya.",
@@ -58,10 +60,10 @@ FAQ = {
 
 
 def render() -> None:
-    ui.page_header("Panduan", "Cara kerja, kategori, dan istilah.")
+    ui.page_header("Panduan", "Alur kerja, kategori, dan istilah.")
 
-    t1, t2, t3, t4 = st.tabs([":material/route: Cara kerja", ":material/label: Kategori",
-                              ":material/menu_book: Glosarium", ":material/help: Tanya jawab"])
+    t1, t2, t3, t4 = st.tabs([":material/route: Alur Kerja", ":material/label: Kategori",
+                              ":material/menu_book: Glosarium", ":material/help: FAQ"])
 
     with t1:
         steps = "".join(
@@ -72,26 +74,31 @@ def render() -> None:
         st.html(f"<div class='steps'>{steps}</div>")
         st.write("")
         menu = [
-            ("Screener", "Filter emiten; klik titik atau baris untuk pratinjau."),
-            ("Detail Saham", "Ringkasan, persentil sektor, emiten sejenis, cek fundamental."),
-            ("Sektor", "Tolok ukur dan komposisi kategori per sektor."),
-            ("Watchlist", "Emiten yang Anda pantau."),
+            ("Beranda / Screener", "Tabel seluruh saham, visual clustering, filter sektor, "
+                                   "kategori, rentang PER dan PBV."),
+            ("Detail Saham", "PER, PBV, ROE, DER satu saham, posisi dalam cluster, "
+                             "perbandingan rata-rata sektor, hasil Random Forest."),
+            ("Perbandingan Sektor", "Rata-rata PER dan PBV per sektor, komposisi cluster, "
+                                    "sebaran PER terhadap PBV."),
+            ("Evaluasi Model", "Elbow, Silhouette, DBI, confusion matrix, feature importance, "
+                               "accuracy, precision, recall, F1."),
+            ("Tentang", "Identitas skripsi, penulis, dan dosen pembimbing."),
+            ("Kartu nama di sidebar", "Profil: ubah nama dan kata sandi."),
         ]
         if auth.is_admin():
             menu += [
-                ("Dasbor", "Pengguna, status data, dan aktivitas."),
-                ("Evaluasi Model", "Elbow, Silhouette, DBI, confusion matrix, verifikasi."),
-                ("Data & Model", "Impor hasil notebook dan ekspor Excel."),
-                ("Pengguna", "Kelola akun dan peran."),
+                ("Pengguna", "Kelola akun: tambah, ubah peran, reset sandi, nonaktifkan."),
+                ("Data & Model", "Data perhitungan, dataset global, pra-pemrosesan, "
+                                 "verifikasi, ekspor Excel."),
             ]
-        st.dataframe({"Menu": [m for m, _ in menu], "Fungsi": [f for _, f in menu]},
+        ui.table({"Menu": [m for m, _ in menu], "Fungsi": [f for _, f in menu]},
                      hide_index=True, width="stretch")
 
     with t2:
         for k in config.LABEL_ORDER:
             with st.container(border=True):
                 st.html(f"<div style='display:flex;gap:12px;align-items:center'>"
-                        f"{ui.badge_html(k)}<span style='color:#475569'>"
+                        f"{ui.badge_html(k)}<span style='color:var(--muted)'>"
                         f"{ui.esc(config.LABEL_DESC[k])}</span></div>")
 
     with t3:
@@ -107,6 +114,3 @@ def render() -> None:
         for tanya, jawab in FAQ.items():
             with st.expander(tanya):
                 st.write(jawab)
-
-    st.divider()
-    ui.disclaimer()

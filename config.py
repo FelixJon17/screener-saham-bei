@@ -1,15 +1,3 @@
-"""
-config.py
-Satu-satunya sumber kebenaran untuk parameter aplikasi.
-
-Aplikasi berada satu folder dengan notebook dan TIDAK melatih model sendiri.
-Seluruh hasil (label cluster, model K-Means, model Random Forest, evaluasi k,
-statistik sektor) dibaca dari output_revisi/ yang ditulis oleh sel terakhir
-`535230119_SkripsiFelix_revisi.ipynb`.
-Parameter metodologis di bawah ini hanya dipakai untuk (1) merekonstruksi
-jejak pra-pemrosesan dan pembagian data uji agar dapat diverifikasi, dan
-(2) ditampilkan kepada pengguna. Nilainya HARUS sama dengan notebook.
-"""
 from pathlib import Path
 
 # --------------------------------------------------------------------------
@@ -17,21 +5,17 @@ from pathlib import Path
 # --------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
-# Set hasil bawaan: folder output notebook revisi dan dataset mentah yang dibaca
-# notebook. Menjalankan ulang notebook otomatis memperbarui aplikasi.
-MODEL_DIR = BASE_DIR / "output_revisi"
-DEFAULT_RAW_PATH = BASE_DIR / "Dataset September.xlsx"
-
-# Nama berkas hasil ekspor notebook (sel terakhir notebook)
-ART_TABLE = "hasil_clustering.xlsx"
-ART_KMEANS = "model_kmeans.joblib"
-ART_RF = "model_random_forest.joblib"
-ART_SECTOR = "statistik_sektor.csv"
-ART_KEVAL = "evaluasi_k.csv"
-ART_RF_CV = "evaluasi_rf_repeated_cv.csv"          # hanya ada di versi revisi
-ARTIFACTS_REQUIRED = [ART_TABLE, ART_KMEANS, ART_RF]
-ARTIFACTS_OPTIONAL = [ART_SECTOR, ART_KEVAL, ART_RF_CV]
-ARTIFACT_NAMES = ARTIFACTS_REQUIRED + ARTIFACTS_OPTIONAL
+# Seluruh hasil dihitung langsung dari dataset (src/trainer.py), tanpa berkas
+# hasil perantara. Konfigurasi data perhitungan (dipilih admin):
+#   "positif" : PER > 0 dan PBV > 0 (627 saham, sesuai proposal)
+#   "semua"   : seluruh saham kecuali nilai kosong (959 saham)
+DATA_POSITIF = "positif"
+DATA_SEMUA = "semua"
+DATA_MODES = {
+    DATA_POSITIF: "Data positif (PER > 0 dan PBV > 0)",
+    DATA_SEMUA: "Seluruh data (kecuali nilai kosong)",
+}
+DEFAULT_RAW_PATH = BASE_DIR / "Dataset September.xlsx"   # dataset penelitian
 
 # --------------------------------------------------------------------------
 # Skema kolom (sama dengan notebook)
@@ -61,7 +45,8 @@ CHARACTERIZATION_FEATURES = [COL_ROE, COL_DER]
 # Koreksi sektor yang dilakukan di sel 2 notebook
 SECTOR_FIXES = {"KETR": "Infrastructures", "VICI": "Consumer Non-Cyclicals"}
 
-WINSOR_PERCENTILE = 95          # upper-only, PER/PBV market-wide; ROE/DER dari data latih
+WINSOR_PERCENTILE = 95          # upper-only, market-wide (PER/PBV, lalu ROE/DER)
+WINSOR_LOWER_PERCENTILE = 5     # batas bawah, hanya untuk konfigurasi data "semua"
 ZSCORE_DDOF = 1
 K_RANGE_NOTEBOOK = "2–6"
 KMEANS_N_INIT = 50
@@ -69,9 +54,7 @@ RANDOM_STATE = 42
 
 TEST_SIZE = 0.20                # train_test_split(..., stratify=y, random_state=42)
 SPLIT_RANDOM_STATE = 42
-GRID_CV_FOLDS = 5
-REPEATED_CV = "5-fold × 10 ulangan"
-PERM_REPEATS = 30
+RF_N_ESTIMATORS = 100           # class_weight="balanced", parameter lain bawaan, tanpa tuning
 
 IDX_IC_SECTORS = [
     "Energy",
@@ -87,7 +70,7 @@ IDX_IC_SECTORS = [
     "Transportation & Logistic",
 ]
 
-# Label persis seperti di notebook (sel 11)
+# Label persis seperti di notebook (pelabelan 3.1.6)
 LABEL_LOW = "Valuasi Relatif Rendah"
 LABEL_MID = "Valuasi Relatif Sedang"
 LABEL_HIGH = "Valuasi Relatif Tinggi"
@@ -100,6 +83,25 @@ APP_TITLE = "Pengelompokan Saham BEI Berdasarkan PER dan PBV"
 APP_SUBTITLE = "K-Means Clustering & Karakterisasi Random Forest (ROE, DER)"
 APP_AUTHOR = "Felix Jonathan - 535230119"
 APP_INSTITUTION = "Teknik Informatika, Universitas Tarumanagara"
+
+APP_NAME = "ValuMap"
+APP_TAGLINE = "Screener Saham BEI"
+LOGO_ICON = BASE_DIR / "assets" / "logo_icon.png"
+LOGO_WIDE = BASE_DIR / "assets" / "logo.svg"
+
+# Halaman Tentang (views/tentang.py)
+THESIS_TITLE = ("Pengelompokan Saham BEI Berdasarkan PER dan PBV Menggunakan K-Means "
+                "Clustering dan Karakterisasi Cluster Menggunakan Random Forest Berbasis "
+                "ROE dan DER")
+ABOUT_AUTHOR = "Felix Jonathan"
+ABOUT_NIM = "535230119"
+ABOUT_PRODI = "Program Studi Sarjana Teknik Informatika"
+ABOUT_FAKULTAS = "Fakultas Teknologi Informasi"
+ABOUT_UNIV = "Universitas Tarumanagara"
+PEMBIMBING_1 = "TONY, S.Kom., M.Kom., Ph.D."
+PEMBIMBING_2 = "ARNOLD KAUDIN, S.E., M.M., M.Com., Ph.D."
+PEMBIMBING_1_INST = "Universitas Tarumanagara"
+PEMBIMBING_2_INST = "Universitas Ciputra"
 
 # --------------------------------------------------------------------------
 # Akun, peran, dan penyimpanan aplikasi
@@ -127,19 +129,36 @@ ALLOW_SELF_REGISTER = True
 # --------------------------------------------------------------------------
 # Tampilan
 # --------------------------------------------------------------------------
-COLOR_MAP = {
-    LABEL_LOW: "#16A34A",
-    LABEL_MID: "#D97706",
-    LABEL_HIGH: "#DC2626",
-}
-COLOR_FALLBACK = "#64748B"
-COLOR_PRIMARY = "#2563EB"
+# Palet antarmuka (sama dengan .streamlit/config.toml dan assets/style.css)
+NAVY = "#091540"
+ROYAL = "#1B2CC1"
+PERI = "#7692FF"
+SKY = "#ABD2FA"
+INK = "#0E1A45"       # teks utama
+MUTED = "#5B6B92"     # teks sekunder
+LINE = "#D5E1F5"      # garis & border
 
-LABEL_SHORT = {
-    LABEL_LOW: "Relatif Rendah",
-    LABEL_MID: "Relatif Sedang",
-    LABEL_HIGH: "Relatif Tinggi",
+# Warna kategori valuasi tetap semantik (hijau = murah, merah = mahal) agar
+# langsung terbaca seperti pada screener saham pada umumnya.
+COLOR_MAP = {
+    LABEL_LOW: "#12A150",
+    LABEL_MID: "#E08A00",
+    LABEL_HIGH: "#E0323C",
 }
+COLOR_FALLBACK = MUTED
+COLOR_PRIMARY = ROYAL
+
+# Label operasional (batasan rancangan butir 8–9 dan Spesifikasi 1.5): kategori
+# relatif rendah, sedang, tinggi dibaca sebagai undervalue, fair value, overvalue.
+# Bukan hasil perbandingan nilai intrinsik.
+LABEL_OPS = {
+    LABEL_LOW: "Undervalue",
+    LABEL_MID: "Fair Value",
+    LABEL_HIGH: "Overvalue",
+}
+LABEL_SHORT = {k: f"{k.replace('Valuasi ', '')} ({v})" for k, v in LABEL_OPS.items()}
+# Nama ringkas untuk sumbu grafik dan matriks (Rendah / Sedang / Tinggi)
+LABEL_TINY = {k: k.replace("Valuasi Relatif ", "") for k in LABEL_OPS}
 LABEL_DESC = {
     LABEL_LOW: "PER dan PBV di bawah rata-rata sektor.",
     LABEL_MID: "Sinyal campuran: umumnya PER tinggi, PBV setara sektor.",

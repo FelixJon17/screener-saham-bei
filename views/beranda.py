@@ -1,22 +1,31 @@
 """
-views/beranda.py -- Halaman Beranda/Screener (Gambar 3.3)
+views/beranda.py -- Halaman Beranda/Screener (Gambar L6.2)
 
-Isi sesuai Spesifikasi Rancangan butir 1: tabel seluruh saham, tampilan visual
-clustering, label klasifikasi, filter sektor dan kategori valuasi.
+Spesifikasi Rancangan butir 1: tabel seluruh saham, tampilan visual
+clustering, dan klasifikasi label (undervalue, fair value, overvalue),
+dilengkapi filter berdasarkan sektor dan kategori valuasi.
 
-Interaksi: klik titik pada peta valuasi atau baris pada tabel untuk membuka
-pratinjau saham, lalu lompat ke Detail Saham atau tambahkan ke watchlist.
+Tata letak mengikuti wireframe: kartu ringkasan hasil clustering, panel
+filter (sektor, kategori cluster, rentang PER, rentang PBV), tabel hasil
+screening, unduh CSV beserta catatan, lalu visual clustering. Baris tabel
+atau titik grafik dapat diklik untuk membuka Detail Saham.
+
+Pengguna yang sudah masuk dapat mengunggah dataset sendiri (Kode Saham,
+Sektor, PER, PBV, ROE, DER). Dataset diproses dengan prosedur notebook
+(src/trainer.py) dan seluruh halaman memakai hasilnya, hanya untuk pengguna itu.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
-import plotly.express as px
 import streamlit as st
 
 import config
-from src import auth, db, ui
+from src import auth, data_loader, dataset_store, pipeline, trainer, ui
 
 KEY_PICK = "beranda_pick"
+SEMUA = "Semua"
 
 
 def _pick_point(key: str) -> None:
@@ -33,185 +42,251 @@ def _pick_row(key: str, codes: list[str]):
     return cb
 
 
-def _filters(df: pd.DataFrame) -> pd.DataFrame:
-    with st.container(border=True):
-        a, b, c = st.columns([1.2, 1.6, 2.2], vertical_alignment="bottom")
-        cari = a.text_input("Cari kode saham", placeholder="mis. BBCA",
-                            icon=":material/search:").strip().upper()
-        sektor = b.multiselect("Sektor", sorted(df[config.COL_SEKTOR].unique()),
-                               placeholder="Semua sektor")
-        kat_opsi = [k for k in config.LABEL_ORDER if k in df["Kategori"].unique()]
-        kat_opsi += [k for k in df["Kategori"].unique() if k not in kat_opsi]
-        kategori = c.pills(
-            "Kategori valuasi", kat_opsi, selection_mode="multi",
-            format_func=ui.short,
-        )
+def _hero(p, df: pd.DataFrame) -> None:
+    """Banner judul halaman."""
+    st.html(
+        "<div class='scr-hero slim'><div class='txt'>"
+        "<div class='eyebrow'>IDX Equity Screener</div>"
+        "<div class='ttl'>Beranda</div>"
+        "<div class='sub'>Pengelompokan valuasi saham relatif terhadap sektor</div></div>"
+        f"<div class='chips'><span>K-Means K = {p.k}</span><span>PER · PBV</span>"
+        "<span>Random Forest · ROE · DER</span></div></div>"
+    )
 
-        with st.expander("Filter lanjutan (rentang rasio)", icon=":material/tune:"):
-            g1, g2, g3, g4 = st.columns(4)
-            per = g1.slider("PER", 0.0, float(df[config.COL_PER].max()),
-                            (0.0, float(df[config.COL_PER].max())),
-                            help="Price to Earnings Ratio: harga saham dibagi laba per saham.")
-            pbv = g2.slider("PBV", 0.0, float(df[config.COL_PBV].max()),
-                            (0.0, float(df[config.COL_PBV].max())),
-                            help="Price to Book Value: harga saham dibagi nilai buku per saham.")
-            roe_lo, roe_hi = float(df[config.COL_ROE].min()), float(df[config.COL_ROE].max())
-            roe = g3.slider("ROE (%)", roe_lo, roe_hi, (roe_lo, roe_hi),
-                            help="Return on Equity: laba bersih dibagi ekuitas.")
-            der_hi = float(df[config.COL_DER].max())
-            der = g4.slider("DER", 0.0, der_hi, (0.0, der_hi),
-                            help="Debt to Equity Ratio: total utang dibagi ekuitas.")
+
+TEMPLATE = pd.DataFrame(
+    [["BBCA", "Financials", 23.1, 4.6, 21.2, 0.0],
+     ["TLKM", "Infrastructures", 12.4, 2.1, 16.8, 0.9],
+     ["UNVR", "Consumer Non-Cyclicals", 25.3, 30.5, 120.4, 3.1]],
+    columns=config.REQUIRED_COLUMNS)
+
+
+@st.dialog("Unggah dataset Anda", width="large", icon=":material/upload_file:")
+def _dialog_unggah(username: str) -> None:
+    st.caption("Excel/CSV dengan enam kolom berikut. Hasilnya dipakai di seluruh halaman, "
+               "hanya untuk akun Anda.")
+    st.html("<div class='req-cols'>" + "".join(f"<span>{ui.esc(c)}</span>"
+                                               for c in config.REQUIRED_COLUMNS) + "</div>")
+    f = st.file_uploader("Berkas", type=["xlsx", "csv"], label_visibility="collapsed",
+                         key="unggah_berkas")
+    if not f:
+        st.download_button("Unduh template", TEMPLATE.to_csv(index=False).encode("utf-8"),
+                           file_name="template_dataset.csv", mime="text/csv",
+                           icon=":material/download:", type="tertiary")
+        return
+    try:
+        raw = trainer.read_file(f.getvalue(), f.name)
+    except trainer.TrainError as e:
+        st.error(str(e), icon=":material/error:")
+        return
+    except Exception as e:  # format rusak, lembar kosong, dsb.
+        st.error(f"Berkas tidak dapat dibaca: {e}", icon=":material/error:")
+        return
+
+    guess = trainer.guess_columns(raw.columns)
+    belum = [k for k, v in guess.items() if v is None]
+    opsi = [None, *raw.columns]
+    with st.expander(f"Pemetaan kolom · {6 - len(belum)}/6 terdeteksi", expanded=bool(belum),
+                     icon=":material/swap_horiz:"):
+        cols = st.columns(3)
+        mapping = {
+            c: cols[i % 3].selectbox(
+                c, opsi, index=opsi.index(guess[c]) if guess[c] is not None else 0,
+                format_func=lambda v: "— pilih kolom —" if v is None else str(v),
+                key=f"unggah_map_{c}")
+            for i, c in enumerate(config.REQUIRED_COLUMNS)
+        }
+    ui.table(raw.head(5), hide_index=True, width="stretch", height=150)
+    mode = dataset_store.data_mode()
+    st.caption(f"{len(raw)} baris · data perhitungan: {config.DATA_MODES[mode]}")
+
+    a, b = st.columns([2, 1], vertical_alignment="bottom")
+    nama = a.text_input("Nama dataset", value=Path(f.name).stem[:60], max_chars=60)
+    if b.button("Proses & gunakan", type="primary", icon=":material/play_arrow:",
+                width="stretch"):
+        try:
+            df = trainer.prepare(raw, mapping)
+            with st.spinner("Menjalankan K-Means dan Random Forest…"):
+                dataset_store.save_personal(username, df, nama.strip() or Path(f.name).stem,
+                                            f.name)
+        except (trainer.TrainError, data_loader.SchemaError, pipeline.ArtifactError) as e:
+            st.error(str(e), icon=":material/error:")
+            return
+        st.session_state.pop(KEY_PICK, None)
+        st.rerun()
+
+
+def _kembali(username: str) -> None:
+    dataset_store.clear_personal(username)
+    st.session_state.pop(KEY_PICK, None)
+
+
+def _bar_dataset(p) -> None:
+    """Dataset yang sedang dipakai + tombol unggah / kembali ke data penelitian."""
+    u = auth.current_user()
+    ds = ui.active_set()
+    with st.container(border=True, key="dataset_bar"):
+        a, b, c = st.columns([3.2, 1.2, 1.4], vertical_alignment="center")
+        if ds.pribadi:
+            buang = p.sektor_dibuang
+            a.html("<div class='ds-bar'><span class='ic pri'>⇪</span><div>"
+                   f"<b>Dataset Anda: {ui.esc(ds.label)}</b><small>{len(p.table)} saham · "
+                   f"diunggah {ui.esc(ds.uploaded_at or '')}"
+                   + (f" · sektor tunggal dibuang: {ui.esc(', '.join(buang))}" if buang else "")
+                   + "</small></div></div>")
+            c.button("Kembali ke data penelitian", icon=":material/restart_alt:",
+                     on_click=_kembali, args=(u["username"],), width="stretch")
+        else:
+            a.html("<div class='ds-bar'><span class='ic'>▦</span><div>"
+                   f"<b>{'Data penelitian' if ds.is_default else 'Dataset'}: "
+                   f"{ui.esc(ds.label)}</b>"
+                   f"<small>{len(p.table)} saham · {ui.esc(p.data_label)}</small></div></div>")
+        if (b if ds.pribadi else c).button("Unggah dataset", icon=":material/upload:", type="primary",
+                    width="stretch", help=None if u else "Masuk untuk mengunggah dataset"):
+            if not u:
+                ui.goto("masuk")
+            _dialog_unggah(u["username"])
+
+
+def _ringkasan(df: pd.DataFrame) -> None:
+    """Kartu Total Saham, Relatif Rendah, Relatif Sedang, Relatif Tinggi."""
+    total = max(len(df), 1)
+    ikon = {config.LABEL_LOW: "▼", config.LABEL_MID: "◆", config.LABEL_HIGH: "▲"}
+    cards = [
+        "<div class='kpi-card total' style='--c:var(--royal);--bg:rgba(27,44,193,.10)'>"
+        "<div class='top'><span class='ic'>Σ</span><span class='lbl'>Total Saham</span></div>"
+        f"<div class='val'>{len(df)} <small>emiten</small></div>"
+        "<div class='bar'><span style='width:100%'></span></div>"
+        f"<div class='ft'><span>{df[config.COL_SEKTOR].nunique()} sektor IDX-IC</span>"
+        f"<span>median PER {ui.fmt_num(df[config.COL_PER].median())}</span></div></div>"
+    ]
+    for k in config.LABEL_ORDER:
+        sub = df[df["Kategori"] == k]
+        pct = len(sub) / total * 100
+        c = ui.color_of(k)
+        cards.append(
+            f"<div class='kpi-card' style='--c:{c};--bg:{c}1F'>"
+            f"<div class='top'><span class='ic'>{ikon[k]}</span>"
+            f"<span class='lbl'>{ui.esc(ui.tiny(k))}</span>"
+            f"<span class='op'>{ui.esc(config.LABEL_OPS[k])}</span></div>"
+            f"<div class='val'>{len(sub)} <small>saham</small></div>"
+            f"<div class='bar'><span style='width:{pct:.1f}%'></span></div>"
+            f"<div class='ft'><span>{pct:.1f}% saham</span>".replace(".", ",")
+            + f"<span>median PER {ui.fmt_num(sub[config.COL_PER].median())}</span></div></div>"
+        )
+    st.html(f"<div class='kpi-grid'>{''.join(cards)}</div>")
+
+
+def _rentang(label: str, key: str) -> tuple[float | None, float | None]:
+    st.caption(label)
+    a, b = st.columns(2, gap="small")
+    lo = a.number_input(f"{label} min", value=None, min_value=0.0, placeholder="Min",
+                        key=f"{key}_min", label_visibility="collapsed")
+    hi = b.number_input(f"{label} max", value=None, min_value=0.0, placeholder="Max",
+                        key=f"{key}_max", label_visibility="collapsed")
+    return lo, hi
+
+
+FILTER_KEYS = {"f_sektor": SEMUA, "f_kategori": SEMUA, "f_per_min": None, "f_per_max": None,
+               "f_pbv_min": None, "f_pbv_max": None}
+
+
+def _reset_filter() -> None:
+    for k, v in FILTER_KEYS.items():
+        st.session_state[k] = v
+
+
+def _panel_filter(df: pd.DataFrame) -> pd.DataFrame:
+    aktif = sum(st.session_state.get(k, v) != v for k, v in FILTER_KEYS.items())
+    with st.container(border=True, key="panel_filter"):
+        a, b = st.columns([2.8, 1], vertical_alignment="center", gap="small")
+        a.html(f"<div class='pf-head'><span class='ic'>⚲</span><b>Panel Filter</b>"
+               + (f"<span class='n'>{aktif}</span>" if aktif else "") + "</div>")
+        b.button("Reset", type="tertiary", on_click=_reset_filter, disabled=not aktif,
+                 key="f_reset", width="stretch")
+        sektor = st.selectbox("Sektor", [SEMUA] + sorted(df[config.COL_SEKTOR].unique()),
+                              key="f_sektor")
+        kat_opsi = [k for k in config.LABEL_ORDER if k in df["Kategori"].unique()]
+        kategori = st.selectbox("Kategori cluster", [SEMUA] + kat_opsi, key="f_kategori",
+                                format_func=lambda k: k if k == SEMUA else ui.short(k))
+        per_lo, per_hi = _rentang("Rentang PER", "f_per")
+        pbv_lo, pbv_hi = _rentang("Rentang PBV", "f_pbv")
 
     view = df
-    if cari:
-        view = view[view[config.COL_KODE].str.contains(cari, regex=False)]
-    if sektor:
-        view = view[view[config.COL_SEKTOR].isin(sektor)]
-    if kategori:
-        view = view[view["Kategori"].isin(kategori)]
-    return view[
-        view[config.COL_PER].between(*per)
-        & view[config.COL_PBV].between(*pbv)
-        & view[config.COL_ROE].between(*roe)
-        & view[config.COL_DER].between(*der)
-    ]
+    if sektor != SEMUA:
+        view = view[view[config.COL_SEKTOR] == sektor]
+    if kategori != SEMUA:
+        view = view[view["Kategori"] == kategori]
+    for col, lo, hi in ((config.COL_PER, per_lo, per_hi), (config.COL_PBV, pbv_lo, pbv_hi)):
+        if lo is not None:
+            view = view[view[col] >= lo]
+        if hi is not None:
+            view = view[view[col] <= hi]
+    return view
 
 
-def _quick_view(p, kode: str) -> None:
-    """Kartu pratinjau untuk saham yang diklik di peta atau tabel."""
+def _tabel(view: pd.DataFrame, total: int) -> None:
+    with st.container(border=True, key="tabel_box"):
+        a, b = st.columns([3, 1], vertical_alignment="center")
+        a.html(f"<div class='tb-head'><b>Hasil Screening</b>"
+               f"<span class='cnt'>{len(view)} / {total} saham</span></div>")
+        b.caption("Klik baris untuk detail")
+        t = view[[config.COL_KODE, config.COL_SEKTOR, config.COL_PER, config.COL_PBV,
+                  config.COL_ROE, config.COL_DER, "Kategori"]].copy()
+        t["Status"] = t.pop("Kategori").map(config.LABEL_OPS)
+        warna = {config.LABEL_OPS[k]: ui.color_of(k) for k in config.LABEL_ORDER}
+        gaya = (t.style
+                .format(precision=2, subset=[config.COL_PER, config.COL_PBV, config.COL_ROE,
+                                             config.COL_DER])
+                .map(lambda v: f"background-color:{warna.get(v, '')}2E;color:{warna.get(v, '')}",
+                     subset=["Status"]))
+        ui.table(
+            gaya, width="stretch", hide_index=True, height=430, selection_mode="single-row",
+            key="tabel_saham", row_height=36,
+            on_select=_pick_row("tabel_saham", view[config.COL_KODE].tolist()),
+            column_config={
+                config.COL_KODE: st.column_config.TextColumn("Kode Saham", pinned=True),
+                config.COL_ROE: st.column_config.NumberColumn("ROE (%)"),
+                "Status": st.column_config.TextColumn("Status", alignment="center",
+                                                      width="small"),
+            },
+        )
+
+
+def _pilihan(p, kode: str) -> None:
+    """Baris ringkas untuk saham yang diklik: buka Detail Saham."""
     row = p.table[p.table[config.COL_KODE] == kode]
     if row.empty:
         return
     row = row.iloc[0]
-    sec = p.sector_summary.loc[row[config.COL_SEKTOR]]
-    user = auth.current_user()["username"]
-    in_wl = kode in db.watchlist(user)
-
     with st.container(border=True):
-        a, b = st.columns([3, 2], vertical_alignment="center")
-        a.html(
-            f"<div style='display:flex;gap:12px;align-items:center;flex-wrap:wrap'>"
-            f"<span style='font-size:1.5rem;font-weight:800'>{ui.esc(kode)}</span>"
-            f"{ui.badge_html(row['Kategori'])}"
-            f"<span style='color:#64748B'>{ui.esc(row[config.COL_SEKTOR])}</span></div>"
-        )
-        with b:
-            bb = st.columns(3)
-            if bb[0].button("Lihat detail", icon=":material/open_in_new:", type="primary",
-                            width="stretch"):
-                ui.goto("detail", kode_terpilih=kode)
-            if in_wl:
-                if bb[1].button("Hapus", icon=":material/bookmark_remove:", width="stretch"):
-                    db.watchlist_remove(user, kode)
-                    st.toast(f"{kode} dihapus dari watchlist")
-                    st.rerun()
-            elif bb[1].button("Pantau", icon=":material/bookmark_add:", width="stretch"):
-                db.watchlist_add(user, kode)
-                st.toast(f"{kode} ditambahkan ke watchlist", icon=":material/bookmark_added:")
-                st.rerun()
-            if bb[2].button("Tutup", icon=":material/close:", width="stretch"):
-                st.session_state.pop(KEY_PICK, None)
-                st.rerun()
-
-        m = st.columns(4)
-        for col, r, med, inv in [
-            (m[0], config.COL_PER, "PER_median", False), (m[1], config.COL_PBV, "PBV_median", False),
-            (m[2], config.COL_ROE, "ROE_median", False), (m[3], config.COL_DER, "DER_median", True),
-        ]:
-            col.metric(r + (" (%)" if r == config.COL_ROE else ""), ui.fmt_num(row[r]),
-                       f"{row[r] - sec[med]:+.2f} vs median sektor",
-                       delta_color="inverse" if inv or r in (config.COL_PER, config.COL_PBV)
-                       else "normal", border=True)
+        a, b, c = st.columns([3.5, 1, 0.8], vertical_alignment="center")
+        a.html(f"<div style='display:flex;gap:10px;align-items:center;flex-wrap:wrap'>"
+               f"<b style='font-size:1.15rem'>{ui.esc(kode)}</b>{ui.badge_html(row['Kategori'])}"
+               f"<span style='color:var(--muted)'>{ui.esc(row[config.COL_SEKTOR])} · "
+               f"PER {ui.fmt_num(row[config.COL_PER])} · PBV {ui.fmt_num(row[config.COL_PBV])}"
+               f"</span></div>")
+        if b.button("Lihat detail", icon=":material/open_in_new:", type="primary",
+                    width="stretch"):
+            ui.goto("detail", kode_terpilih=kode)
+        if c.button("Tutup", icon=":material/close:", width="stretch"):
+            st.session_state.pop(KEY_PICK, None)
+            st.rerun()
 
 
-def _highlights(df: pd.DataFrame, sec: pd.DataFrame) -> None:
-    d = df.copy()
-    d["Skor relatif"] = d["Z-PER (sektor)"] + d["Z-PBV (sektor)"]
-    d = d.join(sec[["ROE_median", "DER_median"]], on=config.COL_SEKTOR)
-    cols = [config.COL_KODE, config.COL_SEKTOR, config.COL_PER, config.COL_PBV,
-            config.COL_ROE, config.COL_DER, "Skor relatif"]
-    cfg = {
-        "Skor relatif": st.column_config.NumberColumn(
-            "Z-PER + Z-PBV", format="%.2f",
-            help="Makin negatif, makin murah dibanding sektornya."),
-        config.COL_ROE: st.column_config.NumberColumn("ROE (%)", format="%.2f"),
-        config.COL_PER: st.column_config.NumberColumn(format="%.2f"),
-        config.COL_PBV: st.column_config.NumberColumn(format="%.2f"),
-        config.COL_DER: st.column_config.NumberColumn(format="%.2f"),
-    }
-
-    lists = [
-        ("Termurah vs sektor", "Z-PER + Z-PBV terendah",
-         d.nsmallest(10, "Skor relatif")),
-        ("Murah, fundamental kuat",
-         "Relatif Rendah · ROE ≥ median · DER ≤ median sektor",
-         d[(d["Kategori"] == config.LABEL_LOW)
-           & (d[config.COL_ROE] >= d["ROE_median"])
-           & (d[config.COL_DER] <= d["DER_median"])].nlargest(10, config.COL_ROE)),
-        ("Termahal vs sektor", "Z-PER + Z-PBV tertinggi",
-         d.nlargest(10, "Skor relatif")),
-    ]
-    c = st.columns(3)
-    for i, (ttl, desc, sub) in enumerate(lists):
-        with c[i].container(border=True):
-            st.markdown(f"**{ttl}**")
-            st.caption(desc)
-            st.dataframe(sub[cols], hide_index=True, width="stretch", height=390,
-                         column_config=cfg, selection_mode="single-row", key=f"hl_{i}",
-                         on_select=_pick_row(f"hl_{i}", sub[config.COL_KODE].tolist()))
-
-
-def render() -> None:
-    p = ui.get_pipeline()
-    df = p.table
-    u = auth.current_user()
-
-    sumber = p.raw_summary.get("berkas")
-    ui.market_header(
-        "Screener Valuasi Saham BEI",
-        "PER &amp; PBV relatif sektor · K-Means" + (f" · {ui.esc(sumber.rsplit('.', 1)[0])}"
-                                                   if sumber else ""),
-        [("Emiten", str(len(df)), None),
-         ("Sektor", str(df[config.COL_SEKTOR].nunique()), None),
-         ("Median PER", ui.fmt_num(df[config.COL_PER].median()), None),
-         ("Median PBV", ui.fmt_num(df[config.COL_PBV].median()), None),
-         ("Watchlist", str(len(db.watchlist(u["username"]))), config.COLOR_PRIMARY)],
-    )
-    st.write("")
-    ui.category_cards(df)
-    st.write("")
-
-    view = _filters(df)
-    if view.empty:
-        st.warning("Tidak ada saham yang cocok. Longgarkan filter.",
-                   icon=":material/filter_alt_off:")
-        return
-
-    preview = st.container()
-
-    tab_peta, tab_tabel, tab_sorot, tab_ringkas = st.tabs(
-        [":material/scatter_plot: Peta Valuasi", ":material/table_rows: Tabel",
-         ":material/star: Sorotan", ":material/donut_large: Ringkasan"]
-    )
-
-    with tab_peta:
-        a, b = st.columns([2, 1.3], vertical_alignment="bottom")
-        a.caption(f"**{len(view)}** / {len(df)} saham · klik titik untuk detail")
+def _visual(view: pd.DataFrame) -> None:
+    with st.container(border=True):
+        a, b = st.columns([2, 1.3], vertical_alignment="center")
+        a.html(f"<div class='tb-head'><b>Plot Clustering</b>"
+               f"<span class='cnt'>{len(view)} saham</span></div>")
         sumbu = b.segmented_control(
             "Sumbu", ["Z-score sektor", "PER & PBV asli"], default="Z-score sektor",
-            label_visibility="collapsed",
-        ) or "Z-score sektor"
+            label_visibility="collapsed", key="sumbu_visual") or "Z-score sektor"
         if sumbu == "Z-score sektor":
             fig = ui.scatter_cluster(view, "Z-PER (sektor)", "Z-PBV (sektor)",
                                      highlight=st.session_state.get(KEY_PICK))
-            fig.add_hline(y=0, line_dash="dot", line_color="#94A3B8")
-            fig.add_vline(x=0, line_dash="dot", line_color="#94A3B8")
-            for x, y, t in [(-1, -1, "← lebih murah dari sektor"),
-                            (1, 1, "lebih mahal dari sektor →")]:
-                fig.add_annotation(xref="paper", yref="paper", x=0.02 if x < 0 else 0.98,
-                                   y=0.02 if y < 0 else 0.98, text=t, showarrow=False,
-                                   font=dict(color="#94A3B8", size=11),
-                                   xanchor="left" if x < 0 else "right")
+            fig.add_hline(y=0, line_dash="dot", line_color=config.PERI)
+            fig.add_vline(x=0, line_dash="dot", line_color=config.PERI)
             fig.update_xaxes(title="Z-PER relatif sektor")
             fig.update_yaxes(title="Z-PBV relatif sektor")
         else:
@@ -221,68 +296,39 @@ def render() -> None:
             fig.update_yaxes(title="PBV (skala log)")
         st.plotly_chart(fig, width="stretch", selection_mode="points", key="peta_valuasi",
                         on_select=lambda: _pick_point("peta_valuasi"))
+        st.caption("Z = 0: setara rata-rata sektor · ±1: satu simpangan baku")
 
-        st.caption("Z = 0 berarti setara rata-rata sektor; ±1 = satu simpangan baku.")
 
-    with tab_tabel:
-        t = ui.with_label(view)
-        c1, c2 = st.columns([3, 1], vertical_alignment="center")
-        c1.caption(f"**{len(view)}** / {len(df)} saham · klik baris untuk detail")
-        c2.download_button("Unduh CSV", view.to_csv(index=False).encode("utf-8"),
-                           file_name="hasil_screener.csv", mime="text/csv",
-                           icon=":material/download:", width="stretch")
-        st.dataframe(
-            t.drop(columns=["Kategori"]),
-            width="stretch", hide_index=True, height=520, selection_mode="single-row",
-            key="tabel_saham",
-            on_select=_pick_row("tabel_saham", view[config.COL_KODE].tolist()),
-            column_config={
-                config.COL_KODE: st.column_config.TextColumn("Kode", pinned=True),
-                "Valuasi": st.column_config.TextColumn(width="small"),
-                config.COL_PER: st.column_config.NumberColumn(format="%.2f"),
-                config.COL_PBV: st.column_config.NumberColumn(format="%.2f"),
-                config.COL_ROE: st.column_config.NumberColumn("ROE (%)", format="%.2f"),
-                config.COL_DER: st.column_config.NumberColumn(format="%.2f"),
-                "Z-PER (sektor)": st.column_config.NumberColumn(format="%+.3f"),
-                "Z-PBV (sektor)": st.column_config.NumberColumn(format="%+.3f"),
-                "Silhouette Sampel": st.column_config.ProgressColumn(
-                    "Kekuatan cluster", min_value=-1.0, max_value=1.0, format="%.2f",
-                    help="Silhouette: 1 = sangat khas, 0 = di perbatasan cluster."),
-            },
-        )
+def render() -> None:
+    p = ui.get_pipeline()
+    df = p.table
 
-    with tab_sorot:
-        _highlights(view, p.sector_summary)
+    _hero(p, df)
+    st.write("")
+    _bar_dataset(p)
+    _ringkasan(df)
+    st.write("")
 
-    with tab_ringkas:
-        a, b = st.columns([1, 2])
-        with a.container(border=True):
-            st.markdown("**Proporsi kategori**")
-            st.plotly_chart(ui.donut_categories(view), width="stretch")
-        with b.container(border=True):
-            st.markdown("**Komposisi kategori per sektor**")
-            comp = (view.groupby([config.COL_SEKTOR, "Kategori"]).size()
-                    .rename("Jumlah").reset_index())
-            comp["Label"] = comp["Kategori"].map(ui.short)
-            fig = px.bar(comp, y=config.COL_SEKTOR, x="Jumlah", color="Kategori",
-                         orientation="h", color_discrete_map=ui.color_map_for(view),
-                         category_orders={"Kategori": config.LABEL_ORDER},
-                         custom_data=["Label"])
-            fig.update_traces(hovertemplate="<b>%{y}</b><br>%{customdata[0]}: %{x} saham"
-                                            "<extra></extra>")
-            fig.for_each_trace(lambda t: t.update(name=ui.short(t.name)))
-            fig.update_layout(barmode="stack", yaxis=dict(categoryorder="total ascending"),
-                              yaxis_title="", xaxis_title="Jumlah saham")
-            st.plotly_chart(ui.style_fig(fig, 320), width="stretch")
-
-        st.markdown("**Profil cluster** · median dan rata-rata")
-        prof = p.clu.centroid_profile.copy()
-        prof.columns = [" ".join(c).strip() if isinstance(c, tuple) else c for c in prof.columns]
-        st.dataframe(prof, width="stretch")
+    kiri, kanan = st.columns([1, 3.3], gap="medium")
+    with kiri:
+        view = _panel_filter(df)
+    with kanan:
+        if view.empty:
+            st.warning("Tidak ada saham yang cocok. Longgarkan filter.",
+                       icon=":material/filter_alt_off:")
+        else:
+            _tabel(view, len(df))
+        a, b = st.columns([1, 3], vertical_alignment="center")
+        a.download_button("Unduh Hasil (CSV)", view.to_csv(index=False).encode("utf-8"),
+                          file_name="hasil_screener.csv", mime="text/csv",
+                          icon=":material/download:", width="stretch",
+                          disabled=view.empty)
+        b.caption("Label valuasi bersifat operasional, bukan rekomendasi jual atau beli.")
+        if note := ui.missing_note(p):
+            st.caption(f":material/info: {note}")
 
     if kode := st.session_state.get(KEY_PICK):
-        with preview:
-            _quick_view(p, kode)
+        _pilihan(p, kode)
 
-    st.divider()
-    ui.disclaimer()
+    if not view.empty:
+        _visual(view)

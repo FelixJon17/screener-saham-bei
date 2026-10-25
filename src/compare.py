@@ -1,16 +1,17 @@
 """
 src/compare.py
-Perbandingan jumlah cluster (mis. K=3 vs K=4) dengan prosedur yang sama
-persis dengan notebook:
+Analisis sensitivitas jumlah cluster (3.1.4): membandingkan K = 3 dengan K
+lain memakai prosedur yang sama persis dengan notebook:
 
-  - K-Means pada PER_z dan PBV_z, n_init=50, random_state=42 (sel 9–10)
-  - aturan pelabelan sel 11 (centroid sama-sama negatif -> Rendah, sama-sama
-    positif dengan skor tertinggi -> Tinggi, sisanya -> Sedang)
-  - Random Forest: Pipeline(WinsorizerAtas -> RF), split 80/20 stratified,
-    GridSearchCV 5-fold f1_macro dengan grid yang sama (sel 13–16)
+  - K-Means pada PER_z dan PBV_z, n_init=50, random_state=42
+  - pelabelan 3.1.6: skor cluster = rata-rata koordinat centroid; skor
+    terendah -> Rendah, tertinggi -> Tinggi, di antaranya -> Sedang
+  - Random Forest: ROE/DER di-winsorize P95 seluruh data, split 80/20
+    stratified (random_state=42), n_estimators=100, class_weight="balanced",
+    tanpa penyetelan hiperparameter
 
-Untuk K yang dipakai notebook, hasil di sini harus identik dengan notebook;
-itu sekaligus menjadi bukti bahwa prosedur untuk K lain setara.
+Untuk K = 3 hasil di sini identik dengan notebook; itu sekaligus menjadi
+bukti bahwa prosedur untuk K lain setara.
 """
 from __future__ import annotations
 
@@ -19,25 +20,17 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
-from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import (accuracy_score, balanced_accuracy_score, davies_bouldin_score,
-                             f1_score, silhouette_score)
-from sklearn.model_selection import GridSearchCV, StratifiedKFold, train_test_split
-from sklearn.pipeline import Pipeline
+from sklearn.metrics import (accuracy_score, davies_bouldin_score, f1_score, precision_score,
+                             recall_score, silhouette_score)
+from sklearn.model_selection import train_test_split
 
 import config
-from src.winsorizer import WinsorizerAtas
 
 ZCOLS = ["Z_" + config.COL_PER, "Z_" + config.COL_PBV]
 
-PARAM_GRID = {"rf__n_estimators": [200],
-              "rf__max_depth": [None, 5, 10],
-              "rf__min_samples_split": [2, 10],
-              "rf__min_samples_leaf": [1, 3, 5, 10]}
-
-# Warna per peringkat skor centroid (rendah -> tinggi), dipakai bila K > 3
-RANK_COLORS = ["#16A34A", "#0891B2", "#D97706", "#7C3AED", "#DC2626", "#DB2777"]
+# Warna per peringkat skor centroid (rendah -> tinggi), dipakai bila K != 3
+RANK_COLORS = ["#16A34A", "#1B2CC1", "#D97706", "#7692FF", "#DC2626", "#DB2777"]
 
 
 @dataclass
@@ -48,7 +41,7 @@ class KResult:
     colors: dict                       # nama label -> warna
     profile: pd.DataFrame              # profil per cluster
     metrics: dict                      # WCSS, Silhouette, DBI, RF
-    best_params: dict
+    importance: dict                   # Feature Importance RF (ROE, DER)
     notes: list
 
 
@@ -57,64 +50,64 @@ def _axis_word(z: float) -> str:
 
 
 def label_clusters(centers: np.ndarray) -> tuple[dict, list]:
-    """Aturan sel 11 notebook, diperluas agar label tetap unik bila K > 3."""
-    k = len(centers)
-    skor = centers.sum(axis=1)
-    neg = [i for i in range(k) if centers[i, 0] < 0 and centers[i, 1] < 0]
-    pos = [i for i in range(k) if centers[i, 0] > 0 and centers[i, 1] > 0]
-    names, notes = {}, []
-    if neg:
-        names[min(neg, key=lambda i: skor[i])] = config.LABEL_LOW
-    if pos:
-        names[max(pos, key=lambda i: skor[i])] = config.LABEL_HIGH
-    sisa = [i for i in range(k) if i not in names]
-    for i in sisa:
-        names[i] = config.LABEL_MID
-    if len(neg) > 1 or len(pos) > 1:
-        notes.append("Lebih dari satu cluster memenuhi syarat Rendah/Tinggi; aturan notebook "
-                     "memilih yang skornya paling ekstrem, sisanya menjadi Sedang.")
-    if len(sisa) > 1:
-        # beberapa cluster "Sedang": bedakan dengan profil centroid-nya
-        for i in sisa:
+    """Aturan 3.1.6: urutkan cluster menurut rata-rata koordinat centroid."""
+    skor = centers.mean(axis=1)
+    urut = [int(i) for i in np.argsort(skor)]
+    names, notes = {i: config.LABEL_MID for i in urut}, []
+    names[urut[0]] = config.LABEL_LOW
+    names[urut[-1]] = config.LABEL_HIGH
+    tengah = urut[1:-1]
+    if len(tengah) > 1:
+        # beberapa cluster "Sedang": bedakan dengan posisi centroid-nya
+        for i in tengah:
             names[i] = (f"{config.LABEL_MID} (PER {_axis_word(centers[i, 0])}, "
                         f"PBV {_axis_word(centers[i, 1])})")
-        notes.append(f"{len(sisa)} cluster berlabel Sedang; dibedakan menurut posisi "
+        notes.append(f"{len(tengah)} cluster berlabel Sedang; dibedakan menurut posisi "
                      "centroid (|z| > 0,5 = tinggi/rendah).")
+    if not tengah:
+        notes.append("K = 2 hanya menghasilkan kategori Rendah dan Tinggi.")
     return names, notes
 
 
-def _rf_eval(X: pd.DataFrame, y: pd.Series) -> tuple[dict, dict]:
+RF_METRICS = ["RF Accuracy", "RF Precision (macro)", "RF Recall (macro)",
+              "RF F1-Score (macro)", "RF F1-Score (weighted)", "Kelas terkecil di data uji"]
+MIN_CLASS_FOR_RF = 10   # split 80/20 stratified butuh cukup anggota per kelas
+
+
+def _rf_eval(X: pd.DataFrame, y: pd.Series, lower: int | None = None) -> tuple[dict, dict]:
+    x = X.to_numpy(dtype=float)
+    batas = np.percentile(x, config.WINSOR_PERCENTILE, axis=0)
+    bawah = np.percentile(x, lower, axis=0) if lower else -np.inf
+    X_w = np.clip(x, bawah, batas)
     X_tr, X_te, y_tr, y_te = train_test_split(
-        X, y, test_size=config.TEST_SIZE, stratify=y, random_state=config.SPLIT_RANDOM_STATE)
-    pipe = Pipeline([("winsor", WinsorizerAtas(config.WINSOR_PERCENTILE)),
-                     ("rf", RandomForestClassifier(class_weight="balanced",
-                                                   random_state=config.RANDOM_STATE))])
-    grid = GridSearchCV(pipe, PARAM_GRID, scoring="f1_macro",
-                        cv=StratifiedKFold(config.GRID_CV_FOLDS, shuffle=True,
-                                           random_state=config.RANDOM_STATE),
-                        n_jobs=-1).fit(X_tr, y_tr)
-    y_pred = grid.best_estimator_.predict(X_te)
-    y_base = DummyClassifier(strategy="most_frequent").fit(X_tr, y_tr).predict(X_te)
+        X_w, y, test_size=config.TEST_SIZE, stratify=y, random_state=config.SPLIT_RANDOM_STATE)
+    rf = RandomForestClassifier(n_estimators=config.RF_N_ESTIMATORS, class_weight="balanced",
+                                random_state=config.RANDOM_STATE).fit(X_tr, y_tr)
+    y_pred = rf.predict(X_te)
     m = {
         "RF Accuracy": accuracy_score(y_te, y_pred),
-        "RF Balanced accuracy": balanced_accuracy_score(y_te, y_pred),
-        "RF F1-macro (uji)": f1_score(y_te, y_pred, average="macro"),
-        "RF F1-macro (CV latih)": grid.best_score_,
-        "Baseline F1-macro": f1_score(y_te, y_base, average="macro", zero_division=0),
+        "RF Precision (macro)": precision_score(y_te, y_pred, average="macro", zero_division=0),
+        "RF Recall (macro)": recall_score(y_te, y_pred, average="macro", zero_division=0),
+        "RF F1-Score (macro)": f1_score(y_te, y_pred, average="macro", zero_division=0),
+        "RF F1-Score (weighted)": f1_score(y_te, y_pred, average="weighted", zero_division=0),
         "Kelas terkecil di data uji": int(y_te.value_counts().min()),
     }
-    params = {k.replace("rf__", ""): v for k, v in grid.best_params_.items()}
-    return m, params
+    imp = dict(zip(["ROE", "DER"], rf.feature_importances_))
+    return m, imp
 
 
-def run_k(table: pd.DataFrame, k: int) -> KResult:
-    """table: tabel aplikasi dengan kolom Z_PER, Z_PBV, ROE %, DER, PER, PBV."""
+def run_k(table: pd.DataFrame, k: int, lower: int | None = None) -> KResult:
+    """
+    table: tabel aplikasi dengan kolom Z_PER, Z_PBV, ROE %, DER, PER, PBV.
+    Random Forest dilewati (metrik NaN) bila ada kelas dengan anggota kurang
+    dari MIN_CLASS_FOR_RF.
+    """
     X = table[ZCOLS].to_numpy(dtype=float)
     km = KMeans(n_clusters=k, n_init=config.KMEANS_N_INIT,
                 random_state=config.RANDOM_STATE).fit(X)
     names, notes = label_clusters(km.cluster_centers_)
 
-    order = np.argsort(km.cluster_centers_.sum(axis=1))   # rendah -> tinggi
+    order = np.argsort(km.cluster_centers_.mean(axis=1))  # rendah -> tinggi
     if k == 3 and len(set(names.values())) == 3:
         colors = dict(config.COLOR_MAP)
     else:
@@ -136,7 +129,12 @@ def run_k(table: pd.DataFrame, k: int) -> KResult:
     prof.index.name = "Cluster"
 
     y = lab.map(names)
-    rf_m, params = _rf_eval(table[config.CHARACTERIZATION_FEATURES], y)
+    if y.value_counts().min() >= MIN_CLASS_FOR_RF:
+        rf_m, imp = _rf_eval(table[config.CHARACTERIZATION_FEATURES], y, lower)
+    else:
+        rf_m, imp = {m: float("nan") for m in RF_METRICS}, {}
+        notes.append(f"Random Forest tidak dievaluasi: ada kategori dengan kurang dari "
+                     f"{MIN_CLASS_FOR_RF} saham.")
     metrics = {
         "WCSS": float(km.inertia_),
         "Silhouette": float(silhouette_score(X, km.labels_)),
@@ -145,14 +143,14 @@ def run_k(table: pd.DataFrame, k: int) -> KResult:
         **rf_m,
     }
     return KResult(k=k, labels=km.labels_, names=names, colors=colors, profile=prof,
-                   metrics=metrics, best_params=params, notes=notes)
+                   metrics=metrics, importance=imp, notes=notes)
 
 
 # metrik -> True bila makin besar makin baik
 ARAH = {"WCSS": False, "Silhouette": True, "Davies-Bouldin": False,
         "Cluster terkecil (saham)": True, "RF Accuracy": True,
-        "RF Balanced accuracy": True, "RF F1-macro (uji)": True,
-        "RF F1-macro (CV latih)": True, "Baseline F1-macro": None,
+        "RF Precision (macro)": True, "RF Recall (macro)": True,
+        "RF F1-Score (macro)": True, "RF F1-Score (weighted)": True,
         "Kelas terkecil di data uji": True}
 
 

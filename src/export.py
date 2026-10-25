@@ -30,8 +30,6 @@ def write_excel(p: PipelineOutput, target: str | Path | io.BytesIO) -> None:
         p.cls.confusion.to_excel(xw, sheet_name="09_Confusion_Matrix")
         p.cls.report.to_excel(xw, sheet_name="10_Precision_Recall_F1")
         p.cls.feature_importance.to_excel(xw, sheet_name="11_Feature_Importance", index=False)
-        if p.cls.cv_summary is not None:
-            p.cls.cv_summary.to_excel(xw, sheet_name="12_Repeated_CV")
         pd.Series(p.cls.metrics).rename("Nilai").to_frame().to_excel(
             xw, sheet_name="13_Metrik_Ringkas")
         if p.pre is not None:

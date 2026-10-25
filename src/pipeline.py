@@ -1,34 +1,33 @@
 """
 src/pipeline.py
-Memuat satu set hasil notebook dan merangkainya menjadi PipelineOutput.
+Menghitung seluruh hasil langsung dari dataset dan merangkainya menjadi
+PipelineOutput.
 
-Satu "set hasil" adalah folder berisi berkas ekspor notebook (lihat
-config.ARTIFACT_NAMES) dan, bila ada, dataset mentah .xlsx/.csv. Seluruh
-halaman aplikasi mengambil angka dari objek yang sama, sehingga angka di
-Beranda, Detail Saham, dan Evaluasi Model dijamin berasal dari model yang
-sama dengan yang dilaporkan di notebook.
+Dataset (Kode Saham, Sektor, PER, PBV, ROE, DER) diproses dengan prosedur
+notebook lewat src/trainer.py, tanpa berkas hasil perantara (Excel/joblib).
+Seluruh halaman aplikasi mengambil angka dari objek yang sama, sehingga angka
+di Beranda, Detail Saham, dan Evaluasi Model berasal dari model yang sama.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
 
 import config
-from src import classification, clustering, data_loader, preprocessing
-from src.winsorizer import register_for_unpickle
+from src import classification, clustering, data_loader, preprocessing, trainer
+from src.winsorizer import lower_for
 
 
 class ArtifactError(ValueError):
-    """Set hasil tidak lengkap atau tidak konsisten."""
+    """Dataset tidak dapat diproses."""
 
 
 @dataclass
 class PipelineOutput:
-    folder: Path
+    source: Path | None             # berkas dataset yang dihitung
     raw: pd.DataFrame | None
     raw_summary: dict
     pre: preprocessing.PreprocessResult | None
@@ -40,6 +39,12 @@ class PipelineOutput:
     sector_summary: pd.DataFrame
     sector_stats: pd.DataFrame | None
     checks: list[dict] = field(default_factory=list)
+    data_mode: str = config.DATA_POSITIF        # konfigurasi data perhitungan
+    sektor_dibuang: list[str] = field(default_factory=list)
+
+    @property
+    def data_label(self) -> str:
+        return config.DATA_MODES.get(self.data_mode, self.data_mode)
 
     @property
     def k(self) -> int:
@@ -48,29 +53,6 @@ class PipelineOutput:
     @property
     def all_checks_ok(self) -> bool:
         return all(c["Status"] != "Gagal" for c in self.checks)
-
-
-# --------------------------------------------------------------------------
-# Berkas
-# --------------------------------------------------------------------------
-def find_raw_dataset(folder: Path) -> Path | None:
-    """Berkas .xlsx/.csv apa pun di folder yang bukan berkas ekspor notebook."""
-    for f in sorted(folder.iterdir()):
-        if (f.suffix.lower() in (".xlsx", ".csv") and f.name not in config.ARTIFACT_NAMES
-                and not f.name.startswith("~$")):
-            return f
-    # set bawaan: dataset mentah berada di samping notebook, bukan di output_revisi/
-    if folder.resolve() == config.MODEL_DIR.resolve() and config.DEFAULT_RAW_PATH.exists():
-        return config.DEFAULT_RAW_PATH
-    return None
-
-
-def missing_artifacts(folder: Path) -> list[str]:
-    return [n for n in config.ARTIFACTS_REQUIRED if not (folder / n).exists()]
-
-
-def _read_optional_csv(path: Path) -> pd.DataFrame | None:
-    return pd.read_csv(path) if path.exists() else None
 
 
 # --------------------------------------------------------------------------
@@ -106,88 +88,71 @@ def _check(nama: str, ok: bool | None, detail: str) -> dict:
     return {"Pemeriksaan": nama, "Status": status, "Detail": detail}
 
 
-def verify(table: pd.DataFrame, km, pre: preprocessing.PreprocessResult | None) -> list[dict]:
+def verify(table: pd.DataFrame, km, pre: preprocessing.PreprocessResult) -> list[dict]:
+    """Pemeriksaan konsistensi hasil perhitungan."""
     out = []
     X = table[clustering.ZCOLS].to_numpy(dtype=float)
-    pred = km.predict(X)
-    n_beda = int((pred != table["Cluster"].to_numpy()).sum())
-    out.append(_check("Model K-Means menghasilkan label yang sama dengan tabel notebook",
+    n_beda = int((km.predict(X) != table["Cluster"].to_numpy()).sum())
+    out.append(_check("Model K-Means memprediksi ulang label yang sama",
                       n_beda == 0, f"{len(table) - n_beda} dari {len(table)} saham cocok"))
 
     labels = set(table["Kategori"].unique())
     asing = labels - set(config.LABEL_ORDER)
-    out.append(_check("Nama label sesuai notebook", not asing,
+    out.append(_check("Nama label sesuai aturan pelabelan 3.1.6", not asing,
                       ", ".join(sorted(labels)) if not asing
                       else f"label tidak dikenal: {', '.join(sorted(asing))}"))
 
-    if pre is None:
-        out.append(_check("Rekonstruksi dari dataset mentah", None,
-                          "Dataset mentah tidak disertakan dalam set hasil"))
-        return out
+    z = pre.data.groupby(config.COL_SEKTOR)[["PER_z", "PBV_z"]]
+    dev = max(float(z.mean().abs().max().max()), float((z.std(ddof=config.ZSCORE_DDOF) - 1)
+                                                       .abs().max().max()))
+    out.append(_check("Z-score tiap sektor: rata-rata 0 dan simpangan baku 1", dev < 1e-6,
+                      f"selisih maksimum {dev:.2e}"))
 
-    a = pre.data.set_index(config.COL_KODE)
-    b = table.set_index(config.COL_KODE)
-    sama = set(a.index) == set(b.index)
-    out.append(_check("Saham hasil pra-pemrosesan = saham di tabel notebook", sama,
-                      f"{len(a)} vs {len(b)} saham" + ("" if sama else
-                      f"; selisih {len(set(a.index) ^ set(b.index))} kode")))
-    if sama:
-        b = b.loc[a.index]
-        dz = float(np.nanmax(np.abs(a[["PER_z", "PBV_z"]].to_numpy()
-                                    - b[clustering.ZCOLS].to_numpy())))
-        out.append(_check("Z-score rekonstruksi = Z-score notebook", dz < 1e-6,
-                          f"selisih maksimum {dz:.2e}"))
-        ds = (a[config.COL_SEKTOR] != b[config.COL_SEKTOR]).sum()
-        out.append(_check("Sektor setelah koreksi sama", ds == 0, f"{ds} saham berbeda"))
+    terkecil = int(table["Kategori"].value_counts().min())
+    out.append(_check("Setiap kategori cukup untuk split stratified", terkecil >= 2,
+                      f"kategori terkecil {terkecil} saham"))
+
+    kosong = int(table[config.REQUIRED_COLUMNS].isna().any(axis=1).sum())
+    out.append(_check("Tidak ada nilai kosong pada data yang dikelompokkan", kosong == 0,
+                      f"{kosong} baris kosong"))
     return out
 
 
 # --------------------------------------------------------------------------
-# Muat
+# Hitung
 # --------------------------------------------------------------------------
-def load(folder: str | Path) -> PipelineOutput:
-    folder = Path(folder)
-    if not folder.is_dir():
-        raise ArtifactError(f"Folder hasil tidak ditemukan: {folder}")
-    if miss := missing_artifacts(folder):
-        raise ArtifactError("Berkas hasil notebook belum lengkap: " + ", ".join(miss))
+def build(df: pd.DataFrame, data_mode: str = config.DATA_POSITIF,
+          source: Path | None = None) -> PipelineOutput:
+    """df: enam kolom wajib. Menjalankan prosedur notebook dan merangkai hasilnya."""
+    try:
+        h = trainer.compute(df, data_mode)
+    except trainer.TrainError as e:
+        raise ArtifactError(str(e)) from e
 
-    register_for_unpickle()
-    km = joblib.load(folder / config.ART_KMEANS)
-    rf = joblib.load(folder / config.ART_RF)
+    tbl = h.table.rename(columns={"PER_z": clustering.ZCOLS[0], "PBV_z": clustering.ZCOLS[1],
+                                  "cluster": "Cluster", "label": "Kategori"})
+    summary = data_loader.describe_raw(df)
+    summary["sektor_anomali_setelah_koreksi"] = sorted(
+        set(h.pre.data[config.COL_SEKTOR]) - set(config.IDX_IC_SECTORS))
+    summary["berkas"] = source.name if source else None
 
-    res = data_loader.load_result_table(folder / config.ART_TABLE)
-    tbl = res.rename(columns={config.COL_Z_PER: clustering.ZCOLS[0],
-                              config.COL_Z_PBV: clustering.ZCOLS[1],
-                              config.COL_CLUSTER: "Cluster", config.COL_LABEL: "Kategori"})
-
-    raw_path = find_raw_dataset(folder)
-    raw = data_loader.load_dataset(raw_path) if raw_path else None
-    pre = preprocessing.run(raw) if raw is not None else None
-    if raw is not None:
-        summary = data_loader.describe_raw(raw)
-        summary["sektor_anomali_setelah_koreksi"] = sorted(
-            set(pre.data[config.COL_SEKTOR]) - set(config.IDX_IC_SECTORS))
-        summary["berkas"] = raw_path.name
-    else:
-        summary = {"n_baris": len(tbl), "n_saham_unik": tbl[config.COL_KODE].nunique(),
-                   "n_duplikat_kode": 0, "n_sektor": tbl[config.COL_SEKTOR].nunique(),
-                   "sektor_anomali": [], "sektor_anomali_setelah_koreksi": [], "berkas": None}
-
-    clu = clustering.build(tbl, km)
-    cls = classification.build(clu.data, rf, _read_optional_csv(folder / config.ART_RF_CV))
-    k_eval = clustering.evaluasi_k(_read_optional_csv(folder / config.ART_KEVAL))
-
-    sec_stats = _read_optional_csv(folder / config.ART_SECTOR)
-    if sec_stats is not None:
-        sec_stats = sec_stats.set_index(sec_stats.columns[0])
-    elif pre is not None:
-        sec_stats = pre.sector_stats
+    clu = clustering.build(tbl, h.kmeans)
+    cls = classification.build(clu.data, h.rf, lower_for(data_mode))
+    k_eval = clustering.evaluasi_k(h.k_eval)
 
     return PipelineOutput(
-        folder=folder, raw=raw, raw_summary=summary, pre=pre,
-        k_eval=k_eval, k_reco=clustering.metric_recommendations(k_eval, km.n_clusters),
+        source=source, raw=df, raw_summary=summary, pre=h.pre,
+        k_eval=k_eval, k_reco=clustering.metric_recommendations(k_eval, h.kmeans.n_clusters),
         clu=clu, cls=cls, table=_build_table(clu),
-        sector_summary=_sector_summary(clu.data), sector_stats=sec_stats,
-        checks=verify(tbl, km, pre),
+        sector_summary=_sector_summary(clu.data), sector_stats=h.pre.sector_stats,
+        checks=verify(tbl, h.kmeans, h.pre), data_mode=data_mode,
+        sektor_dibuang=h.sektor_dibuang,
     )
+
+
+def from_file(path: str | Path, data_mode: str = config.DATA_POSITIF) -> PipelineOutput:
+    """Membaca dataset .xlsx/.csv (enam kolom wajib) lalu menghitung hasilnya."""
+    path = Path(path)
+    if not path.exists():
+        raise ArtifactError(f"Dataset tidak ditemukan: {path}")
+    return build(data_loader.load_dataset(path), data_mode, path)

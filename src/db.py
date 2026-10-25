@@ -4,7 +4,6 @@ Penyimpanan persisten aplikasi berbasis SQLite (pustaka standar Python).
 
 Isi basis data:
   users      akun beserta peran (admin / user) dan hash kata sandi
-  watchlist  daftar pantau saham milik setiap pengguna
   datasets   riwayat dataset yang diunggah admin
   settings   pengaturan global, misalnya dataset aktif dan nilai k
   activity   log aktivitas (masuk, kelola pengguna, ganti dataset)
@@ -33,12 +32,6 @@ CREATE TABLE IF NOT EXISTS users (
     is_active     INTEGER NOT NULL DEFAULT 1,
     created_at    TEXT NOT NULL,
     last_login    TEXT
-);
-CREATE TABLE IF NOT EXISTS watchlist (
-    username  TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
-    kode      TEXT NOT NULL,
-    added_at  TEXT NOT NULL,
-    PRIMARY KEY (username, kode)
 );
 CREATE TABLE IF NOT EXISTS datasets (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,9 +104,8 @@ def list_users() -> pd.DataFrame:
     with connect() as con:
         rows = con.execute(
             "SELECT u.username, u.full_name, u.role, u.is_active, u.created_at,"
-            "       u.last_login, COUNT(w.kode) AS n_watchlist"
-            " FROM users u LEFT JOIN watchlist w ON w.username = u.username"
-            " GROUP BY u.username ORDER BY u.role, u.username"
+            "       u.last_login"
+            " FROM users u ORDER BY u.role, u.username"
         ).fetchall()
     return pd.DataFrame([dict(r) for r in rows])
 
@@ -148,31 +140,6 @@ def count_active_admins() -> int:
         return con.execute(
             "SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = 1"
         ).fetchone()[0]
-
-
-# --------------------------------------------------------------------------
-# Watchlist
-# --------------------------------------------------------------------------
-def watchlist(username: str) -> list[str]:
-    with connect() as con:
-        rows = con.execute(
-            "SELECT kode FROM watchlist WHERE username = ? ORDER BY added_at DESC",
-            (username,),
-        ).fetchall()
-    return [r["kode"] for r in rows]
-
-
-def watchlist_add(username: str, kode: str) -> None:
-    with connect() as con:
-        con.execute(
-            "INSERT OR IGNORE INTO watchlist (username, kode, added_at) VALUES (?, ?, ?)",
-            (username, kode, now()),
-        )
-
-
-def watchlist_remove(username: str, kode: str) -> None:
-    with connect() as con:
-        con.execute("DELETE FROM watchlist WHERE username = ? AND kode = ?", (username, kode))
 
 
 # --------------------------------------------------------------------------

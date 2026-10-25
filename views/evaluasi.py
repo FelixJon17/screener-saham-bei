@@ -1,15 +1,19 @@
 """
-views/evaluasi.py -- Halaman Evaluasi Model (Gambar 3.6)
+views/evaluasi.py -- Halaman Evaluasi Model (Gambar L6.5)
 
-Isi sesuai Spesifikasi Rancangan butir 4: Elbow Method, Silhouette Score,
-Davies-Bouldin Index, Confusion Matrix, Feature Importance, serta Accuracy,
-Precision, Recall, dan F1-Score. Seluruh angka berasal dari hasil notebook
-yang diimpor; tab Verifikasi menunjukkan bahwa angka itu konsisten.
+Spesifikasi Rancangan butir 4: Elbow Method, Silhouette Score, Davies-Bouldin
+Index, Confusion Matrix, nilai Feature Importance Random Forest, serta
+Accuracy, Precision, Recall, dan F1-Score. Seluruh angka berasal dari hasil
+notebook.
 
-Tab "K=3 vs K=4" menjalankan ulang prosedur notebook untuk kedua nilai K
-(src/compare.py). Hasil K=3 di tab itu identik dengan notebook.
+Tata letak mengikuti wireframe: pilihan tampilan K-Means / Random Forest.
+Tampilan Random Forest berisi kartu Accuracy, Precision, Recall, F1-Score,
+confusion matrix, diagram batang horizontal Feature Importance (MDI), dan
+tabel evaluasi tambahan. Tampilan K-Means memuat analisis sensitivitas K
+(3.1.4, src/compare.py). Rekonstruksi pra-pemrosesan dan verifikasi
+konsistensi ada di halaman admin Data & Model.
 
-Halaman ini hanya didaftarkan untuk peran admin (lihat app.py).
+Halaman ini terbuka untuk semua akun yang sudah masuk (lihat app.py).
 """
 from __future__ import annotations
 
@@ -43,7 +47,7 @@ def _metric_fig(ev: pd.DataFrame, col: str, best_k: int, arah: str,
                 k_pakai: int) -> go.Figure:
     fig = go.Figure()
     fig.add_scatter(x=ev["k"], y=ev[col], mode="lines+markers",
-                    line=dict(color="#7C3AED", width=3), marker=dict(size=9), name=col)
+                    line=dict(color="#7692FF", width=3), marker=dict(size=9), name=col)
     fig.add_vline(x=best_k, line_dash="dash", line_color="#DC2626",
                   annotation_text=f"Terbaik: k={best_k}")
     fig.add_vline(x=k_pakai, line_dash="dot", line_color="#16A34A")
@@ -52,20 +56,26 @@ def _metric_fig(ev: pd.DataFrame, col: str, best_k: int, arah: str,
     return ui.style_fig(fig, 360, legend=False)
 
 
-def _tab_clustering(p) -> None:
+def _view_kmeans(p) -> None:
     ev, reco = p.k_eval, p.k_reco
-    if ev.empty:
-        st.info(f"`{config.ART_KEVAL}` tidak tersedia.", icon=":material/info:")
-    else:
-        c = st.columns(4)
-        c[0].metric("k dipakai", reco["dipakai"], border=True)
-        c[1].metric("Elbow menyarankan", reco["elbow"], border=True,
-                    help="Titik dengan jarak terjauh ke garis k pertama–terakhir.")
-        c[2].metric("Silhouette menyarankan", reco["silhouette"], border=True)
-        c[3].metric("DBI menyarankan", reco["dbi"], border=True)
+    c = st.columns(4)
+    c[0].metric("K dipakai", p.k, border=True)
+    c[1].metric("WCSS (Elbow)", f"{p.clu.inertia:.2f}", border=True)
+    c[2].metric("Silhouette Score", f"{p.clu.silhouette:.4f}", border=True,
+                help="Makin tinggi makin baik (-1 s.d. 1).")
+    c[3].metric("Davies-Bouldin Index", f"{p.clu.dbi:.4f}", border=True,
+                help="Makin rendah makin baik.")
 
-        if reco["dipakai"] not in {reco["elbow"], reco["silhouette"], reco["dbi"]}:
-            st.warning(f"Tidak ada metrik yang menunjuk k={reco['dipakai']} sebagai terbaik.",
+    if ev.empty:
+        st.info("Evaluasi K tidak tersedia.", icon=":material/info:")
+    else:
+        sil_k = ev.loc[ev["k"] == reco["dipakai"], "Silhouette Score"]
+        if len(sil_k) and sil_k.iat[0] >= 0.51:
+            st.info(f"K = {reco['dipakai']} dipakai (Silhouette {sil_k.iat[0]:.4f} ≥ 0,51). "
+                    f"Saran metrik: Elbow K = {reco['elbow']} · Silhouette K = "
+                    f"{reco['silhouette']} · DBI K = {reco['dbi']}.", icon=":material/insights:")
+        elif len(sil_k):
+            st.warning(f"Silhouette K = {reco['dipakai']} ({sil_k.iat[0]:.4f}) di bawah 0,51.",
                        icon=":material/insights:")
 
         with st.container(border=True):
@@ -80,158 +90,58 @@ def _tab_clustering(p) -> None:
                                         "makin rendah makin baik", reco["dipakai"]),
                             width="stretch")
 
-        st.markdown(f"**Tabel evaluasi k (notebook, K = {config.K_RANGE_NOTEBOOK})**")
-        st.dataframe(ev.round(4), width="stretch", hide_index=True)
+        with st.container(border=True):
+            st.markdown(f"**Tabel Evaluasi K = {config.K_RANGE_NOTEBOOK}**")
+            ui.table(ev.round(4), width="stretch", hide_index=True)
 
-    st.markdown("**Centroid dan pelabelan**")
-    st.dataframe(p.clu.centroids_z.round(4), width="stretch")
-    for n in p.clu.label_notes:
-        st.write("- " + n)
+    with st.container(border=True):
+        st.markdown("**Profil Centroid**")
+        ui.table(p.clu.centroids_z.round(4), width="stretch")
+        st.caption(p.clu.label_notes[0])
 
-    st.markdown("**Profil setiap cluster (nilai asli)**")
-    prof = p.clu.centroid_profile.copy()
-    prof.columns = [" ".join(c).strip() if isinstance(c, tuple) else c for c in prof.columns]
-    st.dataframe(prof, width="stretch")
+    with st.expander("Analisis Sensitivitas K", expanded=False,
+                     icon=":material/compare_arrows:"):
+        _tab_banding(p)
 
 
-def _tab_rf(p) -> None:
+def _view_rf(p) -> None:
     m, cls = p.cls.metrics, p.cls
     c = st.columns(4)
     c[0].metric("Accuracy", f"{m['accuracy']:.4f}", border=True)
-    c[1].metric("Balanced accuracy", f"{m['balanced_accuracy']:.4f}", border=True,
-                help="Rata-rata recall setiap kelas; tidak terpengaruh ketimpangan kelas.")
-    c[2].metric("Precision (macro)", f"{m['precision_macro']:.4f}", border=True)
-    c[3].metric("F1-Score (macro)", f"{m['f1_macro']:.4f}", border=True)
+    c[1].metric("Precision", f"{m['precision_macro']:.4f}", border=True, help="Macro average.")
+    c[2].metric("Recall", f"{m['recall_macro']:.4f}", border=True, help="Macro average.")
+    c[3].metric("F1-Score", f"{m['f1_macro']:.4f}", border=True, help="Macro average.")
 
-    st.markdown("**Pembanding: menebak kelas mayoritas (data uji)**")
-    st.dataframe(pd.DataFrame({
-        "Accuracy": [m["baseline_kelas_mayoritas"], m["accuracy"]],
-        "Balanced accuracy": [m["baseline_balanced_accuracy"], m["balanced_accuracy"]],
-        "F1-macro": [m["baseline_f1_macro"], m["f1_macro"]],
-    }, index=["Tebak kelas mayoritas", "Random Forest"]).round(4), width="stretch")
-
-    st.markdown(f"**Repeated Stratified K-Fold ({config.REPEATED_CV}) pada seluruh data**")
-    if cls.cv_summary is None:
-        st.info(f"`{config.ART_RF_CV}` tidak tersedia.", icon=":material/info:")
-    else:
-        cv = cls.cv_summary
-        tampil = pd.DataFrame({
-            met: [f"{r[f'{met} (rata-rata)']:.4f} ± {r[f'{met} (sd)']:.4f}"
-                  for _, r in cv.iterrows()]
-            for met in ["Accuracy", "Balanced accuracy", "F1-macro"]
-        }, index=cv.index)
-        st.dataframe(tampil, width="stretch")
-        st.caption("Rata-rata ± simpangan baku dari 50 kali latih–uji.")
-
-    a, b = st.columns([1.2, 1])
-    with a.container(border=True):
-        st.plotly_chart(ui.heatmap_confusion(cls.confusion, "Confusion Matrix (data uji)"),
-                        width="stretch")
-    with b.container(border=True):
-        imp = cls.feature_importance.melt(
-            id_vars="Variabel", value_vars=["MDI", "Permutation (data uji)"],
-            var_name="Metode", value_name="Nilai")
-        fig = px.bar(imp, x="Nilai", y="Variabel", color="Metode", barmode="group",
-                     orientation="h", text_auto=".3f", title="Feature Importance",
-                     color_discrete_sequence=["#2563EB", "#7C3AED"])
+    a, b = st.columns([1.15, 1], gap="medium")
+    with a.container(border=True, height="stretch"):
+        st.markdown("**Confusion Matrix**")
+        n = len(cls.classes)
+        st.caption(f"Aktual terhadap prediksi · {len(cls.X_test)} saham data uji")
+        st.plotly_chart(ui.heatmap_confusion(cls.confusion, ""), width="stretch")
+    with b.container(border=True, height="stretch"):
+        st.markdown("**Feature Importance**")
+        st.caption("MDI (penurunan Gini rata-rata)")
+        imp = cls.feature_importance
+        fig = px.bar(imp, x="Feature Importance", y="Variabel", orientation="h",
+                     text_auto=".4f", color_discrete_sequence=[ui.accent(config.ROYAL)])
         fig.update_traces(marker_cornerradius=8)
-        fig.update_layout(xaxis_title="Nilai kepentingan", yaxis_title="")
-        st.plotly_chart(ui.style_fig(fig, 420), width="stretch")
+        fig.update_layout(xaxis_title="Nilai kepentingan", yaxis_title="",
+                          yaxis=dict(autorange="reversed"))
+        st.plotly_chart(ui.style_fig(fig, 360, legend=False), width="stretch")
 
-    st.markdown("**Precision, Recall, dan F1-Score per kelas**")
-    st.dataframe(cls.report.round(4), width="stretch")
-
-    st.markdown("**Feature Importance**")
-    st.dataframe(cls.feature_importance.round(4), width="stretch", hide_index=True)
-
-    st.markdown("**Model yang dimuat**")
-    info = [("Format", cls.format_model),
-            ("Data latih / uji", f"{len(cls.X_train)} / {len(cls.X_test)} "
-                                 f"(test_size={config.TEST_SIZE}, stratified, "
-                                 f"random_state={config.SPLIT_RANDOM_STATE})"),
-            ("Batas winsorizing ROE / DER",
-             f"{ui.fmt_num(cls.winsor_caps['ROE'], 4)} / {ui.fmt_num(cls.winsor_caps['DER'], 4)}")]
-    info += [(f"Hyperparameter: {k}", str(v)) for k, v in cls.params.items()]
-    st.dataframe(pd.DataFrame(info, columns=["Item", "Nilai"]), hide_index=True,
-                 width="stretch")
-
-    for n in cls.notes:
-        st.caption(n)
-    st.caption("RF hanya memakai ROE dan DER, sedangkan label berasal dari PER dan PBV; "
-               "akurasi sedang adalah temuan, bukan kegagalan model.")
-
-
-def _tab_pre(p) -> None:
-    if p.pre is None:
-        st.info("Dataset mentah tidak tersedia.", icon=":material/info:")
-        return
-    log = p.pre.log_df()
-    st.markdown("**Rantai pra-pemrosesan (rekonstruksi sel 2–8 notebook)**")
-    funnel = go.Figure(go.Funnel(
-        y=log["Tahap"], x=log["Baris sesudah"], textinfo="value+percent initial",
-        marker=dict(color=["#1D4ED8", "#2563EB", "#3B82F6", "#60A5FA", "#7C3AED",
-                           "#8B5CF6"][: len(log)]),
-    ))
     with st.container(border=True):
-        st.plotly_chart(ui.style_fig(funnel, 360, legend=False), width="stretch")
-    st.dataframe(log, width="stretch", hide_index=True)
+        st.markdown("**Tabel Evaluasi Tambahan**")
+        st.caption("Per kelas, macro, dan weighted average")
+        rep = cls.report.copy()
+        nama = {"accuracy": "Accuracy", "macro avg": "Macro average",
+                "weighted avg": "Weighted average"}
+        rep.index = [ui.short(i) if i in config.LABEL_ORDER else nama.get(i, i)
+                     for i in rep.index]
+        ui.table(rep.round(4), width="stretch", column_config={
+            "precision": "Precision", "recall": "Recall", "f1-score": "F1-Score",
+            "support": st.column_config.NumberColumn("Support", format="%d")})
 
-    a, b = st.columns(2)
-    with a:
-        st.markdown("**Koreksi sektor**")
-        st.dataframe(p.pre.sector_fixed, hide_index=True, width="stretch")
-    with b:
-        st.markdown(f"**Ambang winsorizing P{config.WINSOR_PERCENTILE} (PER, PBV)**")
-        st.dataframe(pd.DataFrame(p.pre.winsor_caps).T, width="stretch")
-
-    if p.sector_stats is not None:
-        st.markdown("**Statistik sektor (penyebut Z-score)**")
-        st.dataframe(p.sector_stats.round(4), width="stretch")
-
-    st.markdown("**Data mentah sebelum pembersihan**")
-    r = p.raw_summary
-    cc = st.columns(4)
-    cc[0].metric("Baris", r["n_baris"], border=True)
-    cc[1].metric("Kode unik", r["n_saham_unik"], border=True)
-    cc[2].metric("Kode duplikat", r["n_duplikat_kode"], border=True)
-    cc[3].metric("Nilai sektor unik (mentah)", r["n_sektor"], border=True)
-    if r["sektor_anomali"]:
-        st.caption("Nilai sektor di luar IDX-IC pada data mentah: "
-                   + ", ".join(r["sektor_anomali"])
-                   + ". Seluruhnya dikoreksi oleh notebook."
-                   if not r["sektor_anomali_setelah_koreksi"] else
-                   "Nilai sektor di luar IDX-IC yang masih tersisa setelah koreksi: "
-                   + ", ".join(r["sektor_anomali_setelah_koreksi"]))
-
-    for nama, buang in p.pre.dropped.items():
-        if len(buang):
-            with st.expander(f"Baris dibuang pada tahap: {nama} ({len(buang)})"):
-                st.dataframe(buang, width="stretch", hide_index=True)
-
-
-def _tab_verifikasi(p) -> None:
-    if p.all_checks_ok:
-        st.success("Data aplikasi konsisten dengan hasil notebook.",
-                   icon=":material/verified:")
-    else:
-        st.error("Ada pemeriksaan yang gagal. Pastikan semua berkas berasal dari satu "
-                 "eksekusi notebook.", icon=":material/error:")
-    st.dataframe(pd.DataFrame(p.checks), hide_index=True, width="stretch")
-
-    st.markdown("**Berkas sumber**")
-    rows = []
-    files = [f for f in sorted(p.folder.iterdir()) if f.is_file()]
-    raw = p.raw_summary.get("berkas")
-    if raw and not (p.folder / raw).exists() and config.DEFAULT_RAW_PATH.name == raw:
-        files.append(config.DEFAULT_RAW_PATH)
-    for f in files:
-        peran = ("wajib" if f.name in config.ARTIFACTS_REQUIRED else
-                 "opsional" if f.name in config.ARTIFACTS_OPTIONAL else "dataset mentah")
-        rows.append({"Berkas": f.name, "Peran": peran,
-                     "Ukuran (KB)": round(f.stat().st_size / 1024, 1),
-                     "Diubah": pd.Timestamp(f.stat().st_mtime, unit="s")
-                     .strftime("%Y-%m-%d %H:%M")})
-    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    st.caption("Label berasal dari clustering PER dan PBV, Random Forest menggunakan ROE dan DER")
 
 
 def _scatter_k(data: pd.DataFrame, r: compare.KResult) -> go.Figure:
@@ -249,10 +159,10 @@ def _scatter_k(data: pd.DataFrame, r: compare.KResult) -> go.Figure:
         "Valuasi Relatif ", "")))
     cen = r.profile[["Z-PER", "Z-PBV"]]
     fig.add_scatter(x=cen["Z-PER"], y=cen["Z-PBV"], mode="markers", name="Centroid",
-                    marker=dict(symbol="x", size=14, color="#0F172A",
+                    marker=dict(symbol="x", size=14, color=ui.tc("strong"),
                                 line=dict(width=2, color="white")), hoverinfo="skip")
-    fig.add_hline(y=0, line_dash="dot", line_color="#94A3B8")
-    fig.add_vline(x=0, line_dash="dot", line_color="#94A3B8")
+    fig.add_hline(y=0, line_dash="dot", line_color="#7692FF")
+    fig.add_vline(x=0, line_dash="dot", line_color="#7692FF")
     fig.update_layout(xaxis_title="Z-PER relatif sektor", yaxis_title="Z-PBV relatif sektor",
                       legend=dict(font=dict(size=10)))
     return ui.style_fig(fig, 470)
@@ -261,7 +171,7 @@ def _scatter_k(data: pd.DataFrame, r: compare.KResult) -> go.Figure:
 def _profil_tabel(r: compare.KResult) -> None:
     prof = r.profile.copy()
     prof["Label"] = prof["Label"].str.replace("Valuasi Relatif ", "", regex=False)
-    st.dataframe(prof, width="stretch", column_config={
+    ui.table(prof, width="stretch", column_config={
         "Proporsi (%)": st.column_config.NumberColumn(format="%.1f"),
         "Z-PER": st.column_config.NumberColumn(format="%+.2f"),
         "Z-PBV": st.column_config.NumberColumn(format="%+.2f"),
@@ -273,19 +183,25 @@ def _profil_tabel(r: compare.KResult) -> None:
 
 
 def _tab_banding(p) -> None:
-    a, b = ui.get_comparison(3, 4)
+    reco = p.k_reco
+    kandidat = sorted({k for k in (reco.get("silhouette"), reco.get("dbi"))
+                       if k and k != p.k}) or [4]
+    alasan = {reco.get("silhouette"): "Silhouette terbaik", reco.get("dbi"): "DBI terbaik"}
+    kb = st.segmented_control(
+        "K pembanding", kandidat, default=kandidat[-1], key="sens_k",
+        format_func=lambda k: f"K = {k}" + (f" · {alasan[k]}" if k in alasan else ""))         or kandidat[-1]
+    a, b = ui.get_comparison(p.k, int(kb))
     tabel = compare.metric_table(a, b)
     menang_a = int((tabel["Lebih baik"] == f"K={a.k}").sum())
     menang_b = int((tabel["Lebih baik"] == f"K={b.k}").sum())
 
     ui.market_header(
         f"K = {a.k} vs K = {b.k}",
-        "Prosedur notebook dijalankan ulang untuk kedua K: K-Means n_init=50, aturan label "
-        "sel 11, Random Forest dengan GridSearch dan split yang sama.",
+        "Prosedur yang sama dengan notebook untuk kedua K",
         [(f"Unggul K={a.k}", str(menang_a), config.COLOR_PRIMARY),
-         (f"Unggul K={b.k}", str(menang_b), "#7C3AED"),
-         (f"F1 RF K={a.k}", f"{a.metrics['RF F1-macro (uji)']:.4f}", None),
-         (f"F1 RF K={b.k}", f"{b.metrics['RF F1-macro (uji)']:.4f}", None)],
+         (f"Unggul K={b.k}", str(menang_b), "#7692FF"),
+         (f"F1 RF K={a.k}", f"{a.metrics['RF F1-Score (macro)']:.4f}", None),
+         (f"F1 RF K={b.k}", f"{b.metrics['RF F1-Score (macro)']:.4f}", None)],
     )
     st.write("")
 
@@ -298,13 +214,13 @@ def _tab_banding(p) -> None:
     def _warna(row):
         w = {f"K={a.k}": "", f"K={b.k}": ""}
         if row["Lebih baik"] in w:
-            w[row["Lebih baik"]] = "background-color:#DCFCE7;font-weight:700"
+            w[row["Lebih baik"]] = f"background-color:{ui.tc('ok_bg')};font-weight:700"
         return ["" if c not in w else w[c] for c in row.index]
 
     kiri, kanan = st.columns([1.15, 1])
     with kiri:
         st.markdown("**Ringkasan metrik**")
-        st.dataframe(tampil.style.apply(_warna, axis=1), hide_index=True, width="stretch",
+        ui.table(tampil.style.apply(_warna, axis=1), hide_index=True, width="stretch",
                      height=388)
     with kanan:
         st.markdown("**Perpindahan emiten**")
@@ -312,7 +228,7 @@ def _tab_banding(p) -> None:
         pendek = lambda s: s.replace("Valuasi Relatif ", "")
         fig = px.imshow(mig.values, text_auto=True,
                         x=[pendek(c) for c in mig.columns], y=[pendek(i) for i in mig.index],
-                        color_continuous_scale=["#F8FAFC", "#1D4ED8"],
+                        color_continuous_scale=[ui.tc("scale_lo"), ui.tc("scale_hi")],
                         labels=dict(x=f"K={b.k}", y=f"K={a.k}", color="Emiten"))
         fig.update_layout(coloraxis_showscale=False, xaxis_tickangle=-20)
         st.plotly_chart(ui.style_fig(fig, 388, legend=False), width="stretch")
@@ -332,39 +248,23 @@ def _tab_banding(p) -> None:
         _profil_tabel(b)
 
     st.caption(
-        f"Parameter RF terbaik · K={a.k}: "
-        + ", ".join(f"{k}={v}" for k, v in a.best_params.items())
-        + f" · K={b.k}: " + ", ".join(f"{k}={v}" for k, v in b.best_params.items()))
-    for n in b.notes:
-        st.caption(n)
-    st.caption("Hijau = nilai lebih baik. WCSS selalu turun saat K bertambah, sehingga tidak "
-               "dapat berdiri sendiri sebagai alasan memilih K.")
+        f"Feature Importance RF · K={a.k}: "
+        + ", ".join(f"{k} {v:.4f}" for k, v in a.importance.items())
+        + f" · K={b.k}: " + ", ".join(f"{k} {v:.4f}" for k, v in b.importance.items()))
+    st.caption("Hijau = lebih baik. WCSS selalu turun saat K bertambah.")
 
 
 def render() -> None:
     p = ui.get_pipeline()
-    m = p.cls.metrics
-    ui.market_header(
-        "Evaluasi Model",
-        f"K-Means (PER, PBV) dan Random Forest (ROE, DER) · evaluasi K = "
-        f"{config.K_RANGE_NOTEBOOK}",
-        [("k", str(p.k), None),
-         ("Silhouette", f"{p.clu.silhouette:.4f}", "#7C3AED"),
-         ("Davies-Bouldin", f"{p.clu.dbi:.4f}", "#0891B2"),
-         ("F1-macro RF", f"{m['f1_macro']:.4f}", "#16A34A"),
-         ("Baseline F1", f"{m['baseline_f1_macro']:.4f}", None)],
-    )
+    kiri, kanan = st.columns([2.6, 1], gap="medium", vertical_alignment="center")
+    with kiri:
+        ui.page_header("Evaluasi Model",
+                       f"K-Means (PER, PBV) dan Random Forest (ROE, DER) · {ui.data_badge(p)}")
+    with kanan.container(border=True):
+        tampilan = st.radio("Pilih tampilan", ["K-Means", "Random Forest"],
+                            key="evaluasi_tampilan", horizontal=True)
     st.write("")
-
-    # on_change="rerun": hanya tab yang dibuka yang dijalankan, sehingga perbandingan K
-    # (± 30 detik pada pemuatan pertama) tidak menghambat tab lain.
-    t1, t2, t3, t4, t5 = st.tabs(
-        [":material/hub: Clustering", ":material/forest: Random Forest",
-         ":material/compare_arrows: K=3 vs K=4", ":material/filter_alt: Pra-pemrosesan",
-         ":material/verified: Verifikasi"],
-        key="evaluasi_tab", on_change="rerun")
-    for tab, fn in ((t1, _tab_clustering), (t2, _tab_rf), (t3, _tab_banding),
-                    (t4, _tab_pre), (t5, _tab_verifikasi)):
-        if tab.open:
-            with tab:
-                fn(p)
+    if tampilan == "K-Means":
+        _view_kmeans(p)
+    else:
+        _view_rf(p)

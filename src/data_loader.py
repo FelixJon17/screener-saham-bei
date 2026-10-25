@@ -1,11 +1,7 @@
 """
 src/data_loader.py
-Membaca dataset mentah dan memvalidasi skemanya.
-
-Dataset mentah dipakai hanya untuk merekonstruksi jejak pra-pemrosesan
-(960 → 959 → 627) dan memverifikasi bahwa tabel hasil notebook memang
-berasal dari dataset tersebut. Label dan model tetap diambil dari hasil
-notebook.
+Membaca dataset (.xlsx/.csv) dan memvalidasi skemanya: Kode Saham, Sektor,
+PER, PBV, ROE %, DER.
 """
 from __future__ import annotations
 
@@ -51,9 +47,9 @@ def load_dataset(path: str | Path) -> pd.DataFrame:
     return _validate(read_table(path))[config.REQUIRED_COLUMNS]
 
 
-def load_result_table(path: str | Path) -> pd.DataFrame:
-    """hasil_clustering.xlsx dari notebook."""
-    return _validate(read_table(path), config.TABLE_COLUMNS)
+def normalize(df: pd.DataFrame) -> pd.DataFrame:
+    """Memvalidasi dan merapikan enam kolom wajib (kode kapital, angka numerik)."""
+    return _validate(df)[config.REQUIRED_COLUMNS]
 
 
 def load_uploaded(file_bytes: bytes, filename: str) -> pd.DataFrame:

@@ -1,11 +1,7 @@
 """
 src/clustering.py
-Membangun ringkasan K-Means dari hasil notebook.
-
-Label cluster dibaca langsung dari hasil_clustering.xlsx (kolom `label`), dan
-model K-Means dari model_kmeans.joblib. Modul ini hanya menghitung turunan
-yang tidak diekspor notebook: silhouette per saham, centroid, profil cluster,
-dan rekomendasi k dari evaluasi_k.csv.
+Ringkasan K-Means: silhouette per saham, centroid, profil cluster, dan
+rekomendasi K dari tabel evaluasi K = 2..6 (dihitung src/trainer.py).
 """
 from __future__ import annotations
 
@@ -92,14 +88,14 @@ def build(table: pd.DataFrame, km: KMeans) -> ClusterResult:
     profile.insert(1, "n", out["Cluster"].value_counts().sort_index())
 
     notes = [
-        "Aturan pelabelan notebook (sel 11): cluster dengan centroid Z-PER dan Z-PBV "
-        "sama-sama negatif → Valuasi Relatif Rendah; sama-sama positif → Valuasi Relatif "
-        "Tinggi; selain itu → Valuasi Relatif Sedang. Bila lebih dari satu cluster "
-        "memenuhi syarat, dipilih yang jumlah Z-nya paling ekstrem.",
+        "Aturan pelabelan (3.1.6): skor tiap cluster = rata-rata koordinat centroid "
+        "(Z-PER dan Z-PBV). Skor terendah → Valuasi Relatif Rendah, skor tertinggi → "
+        "Valuasi Relatif Tinggi, di antaranya → Valuasi Relatif Sedang.",
     ]
     for cid, r in centroids.iterrows():
-        notes.append(f"Cluster {cid}: Z-PER {r[ZCOLS[0]]:+.4f}, Z-PBV {r[ZCOLS[1]]:+.4f} "
-                     f"→ {r['Kategori']} ({int(r['Jumlah Anggota'])} saham)")
+        skor = (r[ZCOLS[0]] + r[ZCOLS[1]]) / 2
+        notes.append(f"Cluster {cid}: Z-PER {r[ZCOLS[0]]:+.4f}, Z-PBV {r[ZCOLS[1]]:+.4f}, "
+                     f"skor {skor:+.4f} → {r['Kategori']} ({int(r['Jumlah Anggota'])} saham)")
 
     return ClusterResult(
         data=out, model=km, centroids_z=centroids, centroid_profile=profile,

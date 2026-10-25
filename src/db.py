@@ -86,9 +86,21 @@ def init(hasher) -> None:
                 con.execute(
                     "INSERT INTO users (username, full_name, password_hash, role, created_at)"
                     " VALUES (?, ?, ?, ?, ?)",
-                    (acc["username"], acc["full_name"], hasher(acc["password"]),
+                    (acc["username"], acc["full_name"], hasher(_seed_password(acc)),
                      acc["role"], now()),
                 )
+
+
+def _seed_password(acc: dict) -> str:
+    """
+    Kata sandi akun awal. Saat di-hosting, isi ADMIN_PASSWORD / INVESTOR_PASSWORD
+    di Streamlit Secrets agar kata sandi demo di README tidak berlaku.
+    """
+    try:
+        import streamlit as st
+        return str(st.secrets.get(f"{acc['username'].upper()}_PASSWORD") or acc["password"])
+    except Exception:   # tidak ada secrets.toml (mis. dijalankan lokal)
+        return acc["password"]
 
 
 # --------------------------------------------------------------------------

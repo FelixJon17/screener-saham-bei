@@ -37,7 +37,7 @@ pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-Akun demo: `admin` / `admin123` (Administrator) dan `investor` / `investor123` (Pengguna). Basis data akun dibuat otomatis di `data/app.db` (tidak ikut di-commit). Ganti kata sandi admin lewat halaman **Profil** bila aplikasi dipasang di server publik.
+Akun demo: `admin` / `admin123` (Administrator) dan `investor` / `investor123` (Pengguna). Basis data akun dibuat otomatis di `data/app.db` (tidak ikut di-commit). Saat di-hosting, isi `ADMIN_PASSWORD` (dan opsional `INVESTOR_PASSWORD`) di Streamlit Secrets agar kata sandi demo tidak berlaku.
 
 ## Memperbarui data
 

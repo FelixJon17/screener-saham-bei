@@ -86,21 +86,46 @@ def init(hasher) -> None:
                 con.execute(
                     "INSERT INTO users (username, full_name, password_hash, role, created_at)"
                     " VALUES (?, ?, ?, ?, ?)",
-                    (acc["username"], acc["full_name"], hasher(_seed_password(acc)),
-                     acc["role"], now()),
+                    (acc["username"], acc["full_name"],
+                     hasher(_secret_password(acc) or acc["password"]), acc["role"], now()),
                 )
+    _sync_secret_passwords(hasher)
 
 
-def _seed_password(acc: dict) -> str:
+def _secret_password(acc: dict) -> str | None:
     """
-    Kata sandi akun awal. Saat di-hosting, isi ADMIN_PASSWORD / INVESTOR_PASSWORD
-    di Streamlit Secrets agar kata sandi demo di README tidak berlaku.
+    Kata sandi akun awal dari Streamlit Secrets (ADMIN_PASSWORD /
+    INVESTOR_PASSWORD) saat di-hosting, agar kata sandi demo di README tidak
+    berlaku. None bila tidak diisi (mis. dijalankan lokal).
     """
     try:
         import streamlit as st
-        return str(st.secrets.get(f"{acc['username'].upper()}_PASSWORD") or acc["password"])
-    except Exception:   # tidak ada secrets.toml (mis. dijalankan lokal)
-        return acc["password"]
+        key = f"{acc['username']}_password"
+        pw = st.secrets.get(key.upper()) or st.secrets.get(key)
+    except Exception:   # tidak ada secrets.toml
+        return None
+    return (str(pw).strip() or None) if pw else None
+
+
+def _sync_secret_passwords(hasher) -> None:
+    """
+    Menerapkan kata sandi dari Secrets ke akun awal yang sudah ada, setiap kali
+    nilai Secrets diisi atau diganti (dicatat sebagai hash SHA-256 di tabel
+    settings). Kata sandi yang diganti lewat Profil tetap berlaku sampai nilai
+    Secrets berubah lagi.
+    """
+    import hashlib
+    for acc in config.SEED_ACCOUNTS:
+        pw = _secret_password(acc)
+        if not pw:
+            continue
+        tanda, key = hashlib.sha256(pw.encode()).hexdigest(), f"secret_pw_{acc['username']}"
+        if get_setting(key) == tanda:
+            continue
+        if get_user(acc["username"]):
+            update_user(acc["username"], password_hash=hasher(pw))
+            log(None, "Kata sandi dari Secrets diterapkan", acc["username"])
+        set_setting(key, tanda)
 
 
 # --------------------------------------------------------------------------

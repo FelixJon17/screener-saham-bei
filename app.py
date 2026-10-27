@@ -148,9 +148,6 @@ def _ke_beranda() -> None:
 
 def _beranda_tamu() -> None:
     """Pengunjung baru diarahkan ke login lebih dulu; sesudahnya Beranda terbuka untuk tamu."""
-    if st.query_params.get("dari") == "masuk":   # tautan logo di halaman login
-        st.session_state[KEY_LANDING] = True
-        del st.query_params["dari"]
     if not st.session_state.get(KEY_LANDING):
         st.session_state[KEY_LANDING] = True
         st.switch_page(ui.PAGES["masuk"])
@@ -202,6 +199,12 @@ def _pages_for(role: str | None) -> dict[str, list[st.Page]]:
         ([] if tamu else [P["profil"]])
     return sections
 
+
+# ?dari=... dipasang tautan logo di halaman login dan tombol tema (memuat ulang
+# halaman): pengunjung ini bukan pengunjung baru, jangan dialihkan ke login.
+if st.query_params.get("dari"):
+    st.session_state[KEY_LANDING] = True
+    del st.query_params["dari"]
 
 u = auth.current_user()
 ui.brand_logo()

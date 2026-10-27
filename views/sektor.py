@@ -78,12 +78,19 @@ def render() -> None:
     # ------------------------------------------------------ tabel statistik
     with st.container(border=True):
         st.markdown("**Tabel Statistik Sektor**")
-        tabel = sub_stat[["Jumlah"]].rename(columns={"Jumlah": "Jumlah saham"})
-        for m, nama in (("PER", "PER"), ("PBV", "PBV"), ("ROE", "ROE %"), ("DER", "DER")):
-            tabel[f"{nama} (avg ± std)"] = [f"{a:.2f}" + ("" if pd.isna(s) else f" ± {s:.2f}")
-                                            for a, s in zip(sub_stat[m], sub_stat[f"Std {m}"])]
-        ui.table(tabel.rename_axis("Sektor"), width="stretch")
-        st.caption(f"avg ± std dari nilai hasil {ui.winsor_text(p)}. Untuk PER dan PBV, "
+        # Header dua tingkat: metrik (PER, PBV, ROE, DER) di atas AVG dan STD.
+        kolom = [("", "Jumlah Saham")] + [(nama, x) for nama in ("PER", "PBV", "ROE (%)", "DER")
+                                           for x in ("AVG", "STD")]
+        tabel = pd.DataFrame(
+            [[r["Jumlah"]] + [r[f"{p_}{m}"] for m in ("PER", "PBV", "ROE", "DER")
+                              for p_ in ("", "Std ")] for _, r in sub_stat.iterrows()],
+            index=sub_stat.index.rename("Sektor"), columns=pd.MultiIndex.from_tuples(kolom))
+        # Kolom ber-header bertingkat diatur lewat posisi (0 = kolom Sektor).
+        st.dataframe(tabel, width="stretch", column_config={
+            i + 1: st.column_config.NumberColumn(
+                format="%d" if i == 0 else "%.2f", alignment="center" if i == 0 else "right")
+            for i in range(len(kolom))})
+        st.caption(f"AVG dan STD dari nilai hasil {ui.winsor_text(p)}. Untuk PER dan PBV, "
                    "keduanya adalah μ dan σ pada rumus Z-score.")
         st.download_button("Unduh CSV", sub_stat.to_csv().encode("utf-8"),
                            file_name="statistik_sektor.csv", mime="text/csv",

@@ -8,7 +8,9 @@ dipakai untuk warna komponen HTML (variabel CSS) dan grafik Plotly.
 Streamlit menyimpan pilihan mode pengguna di localStorage peramban dengan
 kunci "stActiveTheme-<path>-v2" (path = alamat saat halaman pertama dimuat).
 Tombol tema menulis kunci itu untuk seluruh alamat halaman lalu memuat ulang
-halaman; sesi login dipulihkan dari cookie (lihat src/auth.py).
+halaman; sesi login dipulihkan dari cookie (lihat src/auth.py). Alamat dasar
+dibaca dari peramban, karena saat di-hosting aplikasi berada di bawah awalan
+(mis. "/~/+/" di Streamlit Community Cloud).
 """
 from __future__ import annotations
 
@@ -16,9 +18,22 @@ import json
 
 import streamlit as st
 
-# Alamat seluruh halaman (url_path di app.py); "/" untuk akses pertama.
-PATHS = ["/", "/beranda", "/detail", "/sektor", "/panduan", "/tentang", "/profil",
-         "/admin", "/evaluasi", "/kelola-data", "/kelola-pengguna", "/masuk", "/daftar"]
+# url_path seluruh halaman di app.py; "" = halaman utama.
+PAGES = ["", "beranda", "detail", "sektor", "evaluasi", "panduan", "tentang", "profil",
+         "masuk", "kelola-data", "kelola-pengguna"]
+
+# Menulis mode ke kunci tema setiap halaman di bawah alamat dasar yang sama, lalu
+# memuat ulang dengan ?dari=tema agar tamu tidak dialihkan ke halaman login.
+_JS_SET = r"""
+const pages = %s, mode = %s;
+let base = window.location.pathname.replace(/\/+$/, "");
+const last = base.split("/").pop();
+if (pages.includes(last)) base = base.slice(0, base.length - last.length).replace(/\/+$/, "");
+for (const pg of pages) window.localStorage.setItem(`stActiveTheme-${base}/${pg}-v2`, mode);
+const url = new URL(window.location.href);
+url.searchParams.set("dari", "tema");
+window.location.replace(url.toString());
+"""
 
 LIGHT = dict(strong="#091540", text="#0E1A45", muted="#5B6B92", grid="#E9F0FC",
              line="#D5E1F5", plot_bg="#FFFFFF", hover_bg="#091540", scale_lo="#EEF4FE",
@@ -69,9 +84,7 @@ def apply_pending() -> None:
     mode = st.session_state.pop(KEY_PENDING, None)
     if not mode:
         return
-    keys = json.dumps([f"stActiveTheme-{p}-v2" for p in PATHS])
-    run_js(f"for (const k of {keys}) window.localStorage.setItem(k, {json.dumps(json.dumps(mode))});"
-           "window.location.reload();")
+    run_js(_JS_SET % (json.dumps(PAGES), json.dumps(json.dumps(mode))))
 
 
 def toggle(key: str = "theme_toggle", label: bool = True) -> None:

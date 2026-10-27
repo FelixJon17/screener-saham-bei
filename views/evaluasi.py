@@ -28,7 +28,6 @@ from src import compare, ui
 FMT_METRIK = {"WCSS": "{:.2f}", "Cluster terkecil (saham)": "{:.0f}",
               "Kelas terkecil di data uji": "{:.0f}"}
 
-
 def _elbow_fig(ev: pd.DataFrame, k_pakai: int, k_elbow: int) -> go.Figure:
     fig = go.Figure()
     fig.add_scatter(x=ev["k"], y=ev["Inertia (WCSS)"], mode="lines+markers",
@@ -42,7 +41,6 @@ def _elbow_fig(ev: pd.DataFrame, k_pakai: int, k_elbow: int) -> go.Figure:
                       yaxis_title="Inertia (WCSS)", xaxis=dict(dtick=1))
     return ui.style_fig(fig, 400, legend=False)
 
-
 def _metric_fig(ev: pd.DataFrame, col: str, best_k: int, arah: str,
                 k_pakai: int) -> go.Figure:
     fig = go.Figure()
@@ -54,7 +52,6 @@ def _metric_fig(ev: pd.DataFrame, col: str, best_k: int, arah: str,
     fig.update_layout(title=f"{col} ({arah})", xaxis_title="Jumlah cluster (k)",
                       yaxis_title=col, xaxis=dict(dtick=1))
     return ui.style_fig(fig, 360, legend=False)
-
 
 def _view_kmeans(p) -> None:
     ev, reco = p.k_eval, p.k_reco
@@ -103,7 +100,6 @@ def _view_kmeans(p) -> None:
                      icon=":material/compare_arrows:"):
         _tab_banding(p)
 
-
 def _view_rf(p) -> None:
     m, cls = p.cls.metrics, p.cls
     c = st.columns(4)
@@ -143,7 +139,6 @@ def _view_rf(p) -> None:
 
     st.caption("Label berasal dari clustering PER dan PBV, Random Forest menggunakan ROE dan DER")
 
-
 def _scatter_k(data: pd.DataFrame, r: compare.KResult) -> go.Figure:
     nama = pd.Series(r.labels).map(r.names).values
     d = data.assign(Label=nama)
@@ -166,7 +161,6 @@ def _scatter_k(data: pd.DataFrame, r: compare.KResult) -> go.Figure:
     fig.update_layout(xaxis_title="Z-PER relatif sektor", yaxis_title="Z-PBV relatif sektor",
                       legend=dict(font=dict(size=10)))
     return ui.style_fig(fig, 470)
-
 
 def _profil_tabel(r: compare.KResult) -> None:
     prof = r.profile.copy()
@@ -252,7 +246,6 @@ def _tab_banding(p) -> None:
         + ", ".join(f"{k} {v:.4f}" for k, v in a.importance.items())
         + f" · K={b.k}: " + ", ".join(f"{k} {v:.4f}" for k, v in b.importance.items()))
     st.caption("Hijau = lebih baik. WCSS selalu turun saat K bertambah.")
-
 
 def render() -> None:
     p = ui.get_pipeline()

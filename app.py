@@ -19,6 +19,7 @@ auth.restore_session()
 auth.refresh_session()
 auth.sync_cookie()
 theme.apply_pending()
+theme.ensure_default()
 
 
 # --------------------------------------------------------------------------

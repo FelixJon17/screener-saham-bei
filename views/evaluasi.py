@@ -6,7 +6,8 @@ Index, Confusion Matrix, nilai Feature Importance Random Forest, serta
 Accuracy, Precision, Recall, dan F1-Score. Seluruh angka berasal dari hasil
 notebook.
 
-Tata letak mengikuti wireframe: pilihan tampilan K-Means / Random Forest.
+Tata letak mengikuti wireframe: pilihan tampilan K-Means / Random Forest,
+ditambah tampilan Gabungan yang merangkum keduanya per kategori valuasi.
 Tampilan Random Forest berisi kartu Accuracy, Precision, Recall, F1-Score,
 confusion matrix, diagram batang horizontal Feature Importance (MDI), dan
 tabel evaluasi tambahan. Tampilan K-Means memuat analisis sensitivitas K
@@ -28,30 +29,36 @@ from src import compare, ui
 FMT_METRIK = {"WCSS": "{:.2f}", "Cluster terkecil (saham)": "{:.0f}",
               "Kelas terkecil di data uji": "{:.0f}"}
 
-def _elbow_fig(ev: pd.DataFrame, k_pakai: int, k_elbow: int) -> go.Figure:
-    fig = go.Figure()
-    fig.add_scatter(x=ev["k"], y=ev["Inertia (WCSS)"], mode="lines+markers",
-                    name="Inertia", line=dict(color=config.COLOR_PRIMARY, width=3),
-                    marker=dict(size=9), fill="tozeroy", fillcolor="rgba(37,99,235,.08)")
-    fig.add_vline(x=k_elbow, line_dash="dash", line_color="#DC2626",
-                  annotation_text=f"Siku terdeteksi: k={k_elbow}")
-    fig.add_vline(x=k_pakai, line_dash="dot", line_color="#16A34A",
-                  annotation_text=f"Dipakai: k={k_pakai}", annotation_position="bottom right")
-    fig.update_layout(title="Elbow Method", xaxis_title="Jumlah cluster (k)",
-                      yaxis_title="Inertia (WCSS)", xaxis=dict(dtick=1))
-    return ui.style_fig(fig, 400, legend=False)
+WARNA_TERBAIK = "#E08A00"
 
-def _metric_fig(ev: pd.DataFrame, col: str, best_k: int, arah: str,
-                k_pakai: int) -> go.Figure:
-    fig = go.Figure()
-    fig.add_scatter(x=ev["k"], y=ev[col], mode="lines+markers",
-                    line=dict(color="#7692FF", width=3), marker=dict(size=9), name=col)
-    fig.add_vline(x=best_k, line_dash="dash", line_color="#DC2626",
-                  annotation_text=f"Terbaik: k={best_k}")
-    fig.add_vline(x=k_pakai, line_dash="dot", line_color="#16A34A")
-    fig.update_layout(title=f"{col} ({arah})", xaxis_title="Jumlah cluster (k)",
-                      yaxis_title=col, xaxis=dict(dtick=1))
-    return ui.style_fig(fig, 360, legend=False)
+
+def _k_fig(ev: pd.DataFrame, col: str, k_pakai: int, k_best: int, label_best: str,
+           warna: str, fill: bool = False) -> go.Figure:
+    """Grafik satu metrik terhadap K: pita untuk K dipakai, label untuk K terbaik."""
+    fig = go.Figure(go.Scatter(
+        x=ev["k"], y=ev[col], mode="lines+markers", name=col,
+        line=dict(color=warna, width=2.5),
+        marker=dict(size=9, color=warna, line=dict(width=2, color=ui.tc("plot_bg"))),
+        fill="tozeroy" if fill else None,
+        fillcolor=ui._hex_rgba(warna, .08) if fill else None,
+        hovertemplate="K = %{x}<br>" + col + ": %{y:.4f}<extra></extra>",
+    ))
+    ui.mark_k(fig, k_pakai, f"Dipakai · K={k_pakai}", ui.accent(config.ROYAL), band=True)
+    if k_best != k_pakai:
+        y_best = float(ev.loc[ev["k"] == k_best, col].iat[0])
+        # Titik minimum (DBI) diberi label di bawahnya agar tidak menimpa garis.
+        ui.mark_k(fig, k_best, f"{label_best} K={k_best}", WARNA_TERBAIK, y=y_best,
+                  below=y_best <= ev[col].min() and not fill)
+    fig.update_xaxes(dtick=1, title="Jumlah cluster (K)")
+    fig.update_yaxes(title=None)
+    if not fill:
+        lo, hi = ev[col].min(), ev[col].max()
+        pad = (hi - lo) * .18 or .05
+        fig.update_yaxes(range=[lo - pad * 2.2, hi + pad * 2.2])
+    fig = ui.style_fig(fig, 300, legend=False)
+    fig.update_layout(margin=dict(t=30, b=30, l=10, r=10))
+    return fig
+
 
 def _view_kmeans(p) -> None:
     ev, reco = p.k_eval, p.k_reco
@@ -75,17 +82,22 @@ def _view_kmeans(p) -> None:
             st.warning(f"Silhouette K = {reco['dipakai']} ({sil_k.iat[0]:.4f}) di bawah 0,51.",
                        icon=":material/insights:")
 
-        with st.container(border=True):
-            st.plotly_chart(_elbow_fig(ev, reco["dipakai"], reco["elbow"]), width="stretch")
-        a, b = st.columns(2)
-        with a.container(border=True):
-            st.plotly_chart(_metric_fig(ev, "Silhouette Score", reco["silhouette"],
-                                        "makin tinggi makin baik", reco["dipakai"]),
-                            width="stretch")
-        with b.container(border=True):
-            st.plotly_chart(_metric_fig(ev, "Davies-Bouldin Index", reco["dbi"],
-                                        "makin rendah makin baik", reco["dipakai"]),
-                            width="stretch")
+        # Tiga metrik sejajar agar mudah dibandingkan untuk K yang sama.
+        grafik = [
+            ("Elbow Method", "Inertia (WCSS), siku = penurunan mulai melandai",
+             "Inertia (WCSS)", reco["elbow"], "Siku", ui.accent(config.ROYAL), True),
+            ("Silhouette Score", "Makin tinggi makin baik", "Silhouette Score",
+             reco["silhouette"], "Terbaik", config.PERI, False),
+            ("Davies-Bouldin Index", "Makin rendah makin baik", "Davies-Bouldin Index",
+             reco["dbi"], "Terbaik", config.PERI, False),
+        ]
+        for kol, (judul, ket, col, k_best, lbl, warna, fill) in zip(
+                st.columns(3, gap="small"), grafik):
+            with kol.container(border=True, height="stretch"):
+                st.markdown(f"**{judul}**")
+                st.caption(ket)
+                st.plotly_chart(_k_fig(ev, col, reco["dipakai"], k_best, lbl, warna, fill),
+                                width="stretch", config={"displayModeBar": False})
 
         with st.container(border=True):
             st.markdown(f"**Tabel Evaluasi K = {config.K_RANGE_NOTEBOOK}**")
@@ -123,7 +135,7 @@ def _view_rf(p) -> None:
         fig.update_traces(marker_cornerradius=8)
         fig.update_layout(xaxis_title="Nilai kepentingan", yaxis_title="",
                           yaxis=dict(autorange="reversed"))
-        st.plotly_chart(ui.style_fig(fig, 360, legend=False), width="stretch")
+        st.plotly_chart(ui.horizontal(ui.style_fig(fig, 360, legend=False)), width="stretch")
 
     with st.container(border=True):
         st.markdown("**Tabel Evaluasi Tambahan**")
@@ -147,7 +159,8 @@ def _scatter_k(data: pd.DataFrame, r: compare.KResult) -> go.Figure:
                      color_discrete_map=r.colors, category_orders={"Label": order},
                      custom_data=[config.COL_KODE, config.COL_PER, config.COL_PBV],
                      title=f"K = {r.k}")
-    fig.update_traces(marker=dict(size=7, opacity=.7, line=dict(width=.5, color="white")),
+    fig.update_traces(marker=dict(size=7, opacity=.8,
+                                  line=dict(width=.5, color=ui.tc("plot_bg"))),
                       hovertemplate="<b>%{customdata[0]}</b><br>PER %{customdata[1]:.2f} · "
                                     "PBV %{customdata[2]:.2f}<extra></extra>")
     fig.for_each_trace(lambda t: t.update(name=ui.short(t.name).replace(
@@ -155,9 +168,9 @@ def _scatter_k(data: pd.DataFrame, r: compare.KResult) -> go.Figure:
     cen = r.profile[["Z-PER", "Z-PBV"]]
     fig.add_scatter(x=cen["Z-PER"], y=cen["Z-PBV"], mode="markers", name="Centroid",
                     marker=dict(symbol="x", size=14, color=ui.tc("strong"),
-                                line=dict(width=2, color="white")), hoverinfo="skip")
-    fig.add_hline(y=0, line_dash="dot", line_color="#7692FF")
-    fig.add_vline(x=0, line_dash="dot", line_color="#7692FF")
+                                line=dict(width=2, color=ui.tc("plot_bg"))),
+                    hoverinfo="skip")
+    ui.zero_lines(fig)
     fig.update_layout(xaxis_title="Z-PER relatif sektor", yaxis_title="Z-PBV relatif sektor",
                       legend=dict(font=dict(size=10)))
     return ui.style_fig(fig, 470)
@@ -247,17 +260,139 @@ def _tab_banding(p) -> None:
         + f" · K={b.k}: " + ", ".join(f"{k} {v:.4f}" for k, v in b.importance.items()))
     st.caption("Hijau = lebih baik. WCSS selalu turun saat K bertambah.")
 
+def _kartu_skor(items: list[tuple[str, str, str, str]]) -> str:
+    """Kartu skor 2 x 2: (nama, nilai, keterangan, penanda HTML)."""
+    return "<div class='ev-score'>" + "".join(
+        f"<div class='it'><div class='k'>{ui.esc(k)}{pil}</div><div class='v'>{v}</div>"
+        f"<div class='h'>{ui.esc(h)}</div></div>" for k, v, h, pil in items) + "</div>"
+
+
+def _view_gabungan(p) -> None:
+    """Ringkasan K-Means dan Random Forest: alur, skor utama, dan hasil per kategori."""
+    m, cls, clu = p.cls.metrics, p.cls, p.clu
+    n = len(p.table)
+    cnt = p.table["Kategori"].value_counts()
+    kategori = [k for k in config.LABEL_ORDER if k in cnt.index]
+    lap = cls.report
+    lolos = clu.silhouette >= 0.51
+    top = cls.feature_importance.iloc[0]
+
+    # -------------------------------------------------------------- alur
+    langkah = [
+        ("Data", f"{n} saham", "PER dan PBV diubah menjadi Z-score relatif sektor."),
+        ("K-Means", f"K = {p.k}", f"Silhouette {clu.silhouette:.4f} · DBI {clu.dbi:.4f}"),
+        ("Label valuasi", f"{len(kategori)} kategori",
+         " · ".join(f"{ui.tiny(k)} {cnt[k]}" for k in kategori)),
+        ("Random Forest", "ROE & DER",
+         f"Accuracy {m['accuracy']:.4f} · F1 {m['f1_macro']:.4f}"),
+    ]
+    st.html("<div class='ev-flow'>" + "".join(
+        f"<div class='st'><div class='n'>Langkah {i}</div><div class='t'>{ui.esc(t)} · "
+        f"{ui.esc(v)}</div><div class='d'>{ui.esc(d)}</div></div>"
+        for i, (t, v, d) in enumerate(langkah, start=1)) + "</div>")
+    st.write("")
+
+    # --------------------------------------------------------- skor utama
+    a, b = st.columns(2, gap="medium")
+    with a.container(border=True, height="stretch"):
+        st.markdown("**K-Means** · kualitas pengelompokan")
+        st.caption("Dari Z-score PER dan PBV terhadap rata-rata sektor")
+        pil = (f"<span class='ev-pill {'ok' if lolos else 'no'}'>"
+               f"{'≥ 0,51' if lolos else '< 0,51'}</span>")
+        reco = p.k_reco
+        st.html(_kartu_skor([
+            ("Silhouette Score", f"{clu.silhouette:.4f}", "Makin tinggi makin baik", pil),
+            ("Davies-Bouldin Index", f"{clu.dbi:.4f}", "Makin rendah makin baik", ""),
+            ("WCSS (Inertia)", f"{clu.inertia:.2f}", "Jarak total saham ke centroid", ""),
+            ("K dipakai", f"{p.k}", f"Saran: Elbow {reco['elbow']} · Silhouette "
+                                    f"{reco['silhouette']} · DBI {reco['dbi']}", ""),
+        ]))
+    with b.container(border=True, height="stretch"):
+        st.markdown("**Random Forest** · ROE dan DER mengenali label")
+        st.caption(f"Data uji {len(cls.X_test)} saham (20%), macro average")
+        st.html(_kartu_skor([
+            ("Accuracy", f"{m['accuracy']:.4f}", "Prediksi tepat dari seluruh data uji", ""),
+            ("Precision", f"{m['precision_macro']:.4f}", "Ketepatan prediksi per kelas", ""),
+            ("Recall", f"{m['recall_macro']:.4f}", "Kelas yang berhasil dikenali", ""),
+            ("F1-Score", f"{m['f1_macro']:.4f}", "Keseimbangan precision dan recall", ""),
+        ]))
+
+    # ------------------------------------------------------ per kategori
+    with st.container(border=True):
+        st.markdown("**Per kategori valuasi**")
+        st.caption("Hasil K-Means (anggota dan centroid) berdampingan dengan kinerja Random "
+                   "Forest pada kelas yang sama")
+        cen = clu.centroids_z.set_index("Kategori")
+        kolom = [("K-Means", "Jumlah saham"), ("K-Means", "Proporsi (%)"),
+                 ("K-Means", "Z-PER centroid"), ("K-Means", "Z-PBV centroid"),
+                 ("Random Forest", "Precision"), ("Random Forest", "Recall"),
+                 ("Random Forest", "F1-Score"), ("Random Forest", "Data uji")]
+        isi = [[int(cnt[k]), cnt[k] / n * 100, cen.loc[k, "Z_PER"], cen.loc[k, "Z_PBV"],
+                lap.loc[k, "precision"], lap.loc[k, "recall"], lap.loc[k, "f1-score"],
+                int(lap.loc[k, "support"])] for k in kategori]
+        tabel = pd.DataFrame(isi, columns=pd.MultiIndex.from_tuples(kolom),
+                             index=pd.Index([ui.dot_html(k) + ui.esc(ui.short(k))
+                                             for k in kategori], name="Kategori"))
+        fmt = {c: "{:.4f}" for c in kolom[4:7]}
+        fmt.update({kolom[1]: "{:.1f}", kolom[2]: "{:+.2f}", kolom[3]: "{:+.2f}"})
+        st.html(ui.html_table(tabel, fmt=fmt))
+        st.write("")
+
+        kiri, kanan = st.columns([1.4, 1], gap="medium")
+        with kiri:
+            nama = [ui.tiny(k) for k in kategori]
+            prop = [cnt[k] / n * 100 for k in kategori]
+            f1 = [lap.loc[k, "f1-score"] * 100 for k in kategori]
+            fig = go.Figure()
+            fig.add_bar(x=nama, y=prop, name="Proporsi saham (K-Means)",
+                        marker=dict(color=[ui.color_of(k) for k in kategori], cornerradius=6),
+                        text=[f"{v:.1f}%" for v in prop], textposition="outside",
+                        cliponaxis=False, hovertemplate="%{x}: %{y:.1f}% saham<extra></extra>")
+            fig.add_bar(x=nama, y=f1, name="F1-Score (Random Forest)",
+                        marker=dict(color=ui.accent(config.ROYAL), opacity=.45, cornerradius=6),
+                        text=[f"{v / 100:.2f}" for v in f1], textposition="outside",
+                        cliponaxis=False, hovertemplate="%{x}: F1 %{y:.1f}%<extra></extra>")
+            fig.update_layout(barmode="group", bargap=.35)
+            fig.update_yaxes(range=[0, 110], ticksuffix="%")
+            st.plotly_chart(ui.style_fig(fig, 300), width="stretch")
+        with kanan:
+            terbaik = max(kategori, key=lambda k: lap.loc[k, "f1-score"])
+            terlemah = min(kategori, key=lambda k: lap.loc[k, "f1-score"])
+            besar = max(kategori, key=lambda k: cnt[k])
+            poin = [
+                f"K-Means membentuk <b>{p.k} kategori</b> dengan Silhouette "
+                f"<b>{clu.silhouette:.4f}</b> ({'memenuhi' if lolos else 'di bawah'} batas "
+                f"0,51) dan DBI <b>{clu.dbi:.4f}</b>.",
+                f"Kategori terbesar: <b>{ui.esc(ui.short(besar))}</b>, {cnt[besar]} saham "
+                f"({cnt[besar] / n * 100:.1f}%).",
+                f"Random Forest dengan ROE dan DER mencapai Accuracy "
+                f"<b>{m['accuracy']:.4f}</b> dan F1-Score <b>{m['f1_macro']:.4f}</b>.",
+                f"Paling mudah dikenali: <b>{ui.esc(ui.tiny(terbaik))}</b> (F1 "
+                f"{lap.loc[terbaik, 'f1-score']:.4f}); paling sulit: "
+                f"<b>{ui.esc(ui.tiny(terlemah))}</b> (F1 {lap.loc[terlemah, 'f1-score']:.4f}).",
+                f"Variabel paling berpengaruh: <b>{ui.esc(top['Variabel'])}</b> "
+                f"({top['Persentase']:.2f}% Feature Importance).",
+            ]
+            st.markdown("**Ringkasan**")
+            st.html("<ul class='ev-note'>" + "".join(f"<li>{x}</li>" for x in poin) + "</ul>")
+
+    st.caption("Label berasal dari clustering PER dan PBV; Random Forest hanya memakai ROE "
+               "dan DER untuk mengenali label tersebut.")
+
+
 def render() -> None:
     p = ui.get_pipeline()
-    kiri, kanan = st.columns([2.6, 1], gap="medium", vertical_alignment="center")
+    kiri, kanan = st.columns([2.2, 1.4], gap="medium", vertical_alignment="center")
     with kiri:
         ui.page_header("Evaluasi Model",
                        f"K-Means (PER, PBV) dan Random Forest (ROE, DER) · {ui.data_badge(p)}")
     with kanan.container(border=True):
-        tampilan = st.radio("Pilih tampilan", ["K-Means", "Random Forest"],
+        tampilan = st.radio("Pilih tampilan", ["K-Means", "Random Forest", "Gabungan"],
                             key="evaluasi_tampilan", horizontal=True)
     st.write("")
     if tampilan == "K-Means":
         _view_kmeans(p)
-    else:
+    elif tampilan == "Random Forest":
         _view_rf(p)
+    else:
+        _view_gabungan(p)

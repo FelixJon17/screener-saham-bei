@@ -9,6 +9,7 @@ from __future__ import annotations
 import html
 import re
 
+import numpy as np
 import pandas as pd
 from pandas.io.formats.style import Styler
 import plotly.express as px
@@ -390,25 +391,115 @@ def logo_img(size: int = 42) -> str:
 # Grafik
 # --------------------------------------------------------------------------
 def style_fig(fig: go.Figure, height: int = 460, legend: bool = True) -> go.Figure:
+    """
+    Gaya seragam seluruh grafik: latar transparen (mengikuti kartu), hanya
+    garis bantu horizontal yang tipis, sumbu tanpa garis nol, dan toolbar
+    Plotly yang samar (muncul jelas saat kursor di atas grafik, lihat CSS).
+    """
     has_title = bool(fig.layout.title.text)
     if has_title:
         # Hanya bila judul ada: objek judul tanpa teks ditampilkan Streamlit
         # sebagai "undefined".
-        fig.update_layout(title_font=dict(size=15, color=tc("strong")))
+        fig.update_layout(title_font=dict(size=14, color=tc("strong")), title_x=0)
     fig.update_layout(
         height=height,
         font=dict(family=FONT, size=12, color=tc("text")),
         margin=dict(t=(40 if has_title else 10) + (30 if legend else 0), b=30, l=10, r=10),
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor=tc("plot_bg"),
+        plot_bgcolor="rgba(0,0,0,0)",
         hoverlabel=dict(bgcolor=tc("hover_bg"), font_color="#FFFFFF", font_family=FONT,
                         bordercolor=tc("hover_bg")),
         showlegend=legend,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+                    title_text="", font=dict(size=11), itemsizing="constant"),
+        modebar=dict(bgcolor="rgba(0,0,0,0)", color=tc("muted"),
+                     activecolor=accent(config.ROYAL)),
     )
-    fig.update_xaxes(gridcolor=tc("grid"), zerolinecolor=tc("line"))
-    fig.update_yaxes(gridcolor=tc("grid"), zerolinecolor=tc("line"))
+    axis = dict(gridcolor=tc("grid"), gridwidth=1, zeroline=False, linecolor=tc("line"),
+                tickfont=dict(size=11, color=tc("muted")),
+                title_font=dict(size=12, color=tc("muted")))
+    fig.update_xaxes(showgrid=False, showline=True, ticks="", **axis)
+    fig.update_yaxes(showgrid=True, showline=False, **axis)
     return fig
+
+
+def horizontal(fig: go.Figure) -> go.Figure:
+    """Untuk batang horizontal: garis bantu vertikal, tanpa garis bantu per kategori."""
+    fig.update_xaxes(showgrid=True, showline=False)
+    fig.update_yaxes(showgrid=False, showline=False)
+    return fig
+
+
+def zero_lines(fig: go.Figure) -> go.Figure:
+    """Garis acuan Z = 0 (rata-rata sektor) yang tipis dan tidak putus-putus."""
+    garis = dict(line_width=1.2, line_color=tc("line"), layer="below")
+    fig.add_hline(y=0, **garis)
+    fig.add_vline(x=0, **garis)
+    return fig
+
+
+def mark_k(fig: go.Figure, k: float, text: str, color: str, y: float | None = None,
+           band: bool = False, below: bool = False) -> go.Figure:
+    """
+    Penanda K pada grafik evaluasi: pita lembut (band=True) untuk K yang
+    dipakai, atau label kecil berpanah yang menunjuk titik (y) untuk K terbaik.
+    """
+    if band:
+        fig.add_vrect(x0=k - .28, x1=k + .28, fillcolor=_hex_rgba(color, .12), line_width=0,
+                      layer="below")
+        fig.add_annotation(x=k, y=1, yref="paper", yanchor="bottom", text=f"<b>{text}</b>",
+                           showarrow=False, font=dict(size=11, color=color))
+    else:
+        fig.add_annotation(x=k, y=y, text=text, showarrow=True, arrowhead=0, arrowwidth=1.2,
+                           arrowcolor=color, ax=0, ay=34 if below else -34,
+                           font=dict(size=11, color="#FFFFFF"),
+                           bgcolor=color, borderpad=3)
+    return fig
+
+
+def html_table(df: pd.DataFrame, fmt: dict | None = None, index: bool = True) -> str:
+    """
+    Tabel HTML dengan header di tengah, termasuk header dua tingkat (kolom
+    MultiIndex). Angka desimal rata kanan, angka bulat di tengah, teks rata kiri.
+    fmt: format per kolom (nama kolom atau tuple MultiIndex), mis. "{:.2f}".
+    """
+    fmt = fmt or {}
+    cols = list(df.columns)
+    multi = isinstance(df.columns, pd.MultiIndex)
+    head = "<thead>"
+    if multi:
+        head += "<tr>" + (f"<th rowspan='2'>{esc(df.index.name or '')}</th>" if index else "")
+        top = [c[0] for c in cols]
+        i = 0
+        while i < len(cols):
+            n = 1
+            while i + n < len(cols) and top[i + n] == top[i] and top[i]:
+                n += 1
+            if top[i]:
+                head += f"<th colspan='{n}' class='grp'>{esc(top[i])}</th>"
+            else:
+                head += f"<th rowspan='2'>{esc(cols[i][1])}</th>"
+            i += n
+        head += "</tr><tr>" + "".join(f"<th>{esc(c[1])}</th>" for c in cols if c[0]) + "</tr>"
+    else:
+        head += ("<tr>" + (f"<th>{esc(df.index.name or '')}</th>" if index else "")
+                 + "".join(f"<th>{esc(c)}</th>" for c in cols) + "</tr>")
+    head += "</thead>"
+
+    def cell(c, v) -> str:
+        if isinstance(v, (int, np.integer)) or (isinstance(v, float) and float(v).is_integer()
+                                                 and c not in fmt):
+            return f"<td class='c'>{int(v)}</td>"
+        if isinstance(v, (float, np.floating)):
+            return f"<td class='r'>{fmt.get(c, '{:.2f}').format(v)}</td>"
+        return f"<td>{v if str(v).startswith('<') else esc(v)}</td>"
+
+    body = "".join(
+        "<tr>" + (f"<td class='lbl'>{i if str(i).startswith('<') else esc(i)}</td>"
+                  if index else "")
+        + "".join(cell(c, r[c]) for c in cols) + "</tr>"
+        for i, r in df.iterrows())
+    return f"<div class='vt-wrap'><table class='vt'>{head}<tbody>{body}</tbody></table></div>"
 
 
 def color_map_for(df: pd.DataFrame) -> dict:
@@ -427,7 +518,7 @@ def scatter_cluster(df: pd.DataFrame, x: str, y: str, title: str = "",
         title=title or None, log_x=log, log_y=log,
     )
     fig.update_traces(
-        marker=dict(size=9, opacity=0.78, line=dict(width=1, color="white")),
+        marker=dict(size=9, opacity=0.85, line=dict(width=1, color=tc("plot_bg"))),
         hovertemplate=(
             "<b>%{customdata[0]}</b> · %{customdata[1]}<br>"
             "PER %{customdata[2]:.2f} · PBV %{customdata[3]:.2f}<br>"
@@ -441,7 +532,7 @@ def scatter_cluster(df: pd.DataFrame, x: str, y: str, title: str = "",
             fig.add_trace(go.Scatter(
                 x=row[x], y=row[y], mode="markers+text",
                 marker=dict(size=24, symbol="star", color=tc("strong"),
-                            line=dict(width=2, color="white")),
+                            line=dict(width=2, color=tc("plot_bg"))),
                 text=[f"<b>{highlight}</b>"], textposition="top center",
                 textfont=dict(size=14, color=tc("strong")),
                 name=highlight, hoverinfo="skip",
@@ -476,7 +567,7 @@ def bar_sector(df: pd.DataFrame, value_col: str, title: str, xlab: str,
         hovertemplate="<b>%{y}</b><br>" + xlab + ": %{x:.2f}<extra></extra>",
     ))
     fig.update_layout(title=title, xaxis_title=xlab, yaxis_title="")
-    return style_fig(fig, 440, legend=False)
+    return horizontal(style_fig(fig, 440, legend=False))
 
 
 def heatmap_confusion(cm: pd.DataFrame, title: str) -> go.Figure:

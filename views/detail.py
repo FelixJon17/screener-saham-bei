@@ -65,7 +65,7 @@ def _proba_fig(proba: dict) -> go.Figure:
     ))
     fig.update_layout(xaxis=dict(range=[0, 118], title="Probabilitas (%)"),
                       yaxis=dict(autorange="reversed"), margin=dict(t=6, b=30))
-    return ui.style_fig(fig, 190, legend=False)
+    return ui.horizontal(ui.style_fig(fig, 190, legend=False))
 
 
 def _interpretasi(row: pd.Series, rata: pd.Series, hasil: dict, sektor: str) -> None:
@@ -146,8 +146,7 @@ def render() -> None:
         sub = df if lingkup == "Seluruh pasar" else df[df[config.COL_SEKTOR] == sektor]
         fig = ui.scatter_cluster(sub, "Z-PER (sektor)", "Z-PBV (sektor)", highlight=kode,
                                  height=430)
-        fig.add_hline(y=0, line_dash="dot", line_color=config.PERI)
-        fig.add_vline(x=0, line_dash="dot", line_color=config.PERI)
+        ui.zero_lines(fig)
         fig.update_xaxes(title="Z-PER relatif sektor")
         fig.update_yaxes(title="Z-PBV relatif sektor")
         st.plotly_chart(fig, width="stretch")

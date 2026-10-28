@@ -353,3 +353,52 @@ h4 { font-size: 1rem !important; margin-bottom: .2rem !important; }
   .lp { min-height: auto; padding: 28px 24px; }
   .lp .bars, .lp .checks { display: none; }
 }
+
+/* ------------------------------------------------------------------ */
+/* Tabel HTML (ui.html_table): header di tengah, header dua tingkat      */
+/* ------------------------------------------------------------------ */
+.vt-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--card); }
+.vt { width: 100%; border-collapse: collapse; font-size: .84rem; color: var(--ink); }
+.vt th { background: var(--sky-50); color: var(--muted); font-weight: 700; font-size: .74rem;
+  text-align: center; padding: 8px 10px; border-bottom: 1px solid var(--line);
+  border-left: 1px solid var(--line); white-space: nowrap; }
+.vt th:first-child { border-left: 0; }
+.vt th.grp { color: var(--title); font-size: .78rem; letter-spacing: .02em; }
+.vt td { padding: 7px 12px; border-bottom: 1px solid var(--line); border-left: 1px solid var(--line);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.vt td:first-child { border-left: 0; }
+.vt tr:last-child td { border-bottom: 0; }
+.vt tbody tr:hover td { background: var(--sky-50); }
+.vt td.r { text-align: right; }
+.vt td.c { text-align: center; }
+.vt td.lbl { font-weight: 600; color: var(--title); }
+
+/* Toolbar Plotly samar; jelas saat kursor berada di atas grafik. */
+.stPlotlyChart .modebar-container { opacity: 0; transition: opacity .15s; }
+.stPlotlyChart:hover .modebar-container { opacity: 1; }
+
+/* Ringkasan evaluasi (views/evaluasi.py, tampilan Gabungan) */
+.ev-flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.ev-flow .st { position: relative; background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 12px 14px; }
+.ev-flow .st:not(:last-child)::after { content: "→"; position: absolute; right: -11px; top: 50%;
+  transform: translateY(-50%); color: var(--peri); font-weight: 800; z-index: 1; }
+.ev-flow .n { font-size: .66rem; font-weight: 800; color: var(--peri); letter-spacing: .08em;
+  text-transform: uppercase; }
+.ev-flow .t { font-weight: 800; color: var(--title); margin: 2px 0; }
+.ev-flow .d { font-size: .78rem; color: var(--muted); line-height: 1.35; }
+.ev-score { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.ev-score .it { border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; }
+.ev-score .k { font-size: .7rem; color: var(--muted); font-weight: 700; text-transform: uppercase;
+  letter-spacing: .04em; }
+.ev-score .v { font-size: 1.25rem; font-weight: 800; color: var(--title); }
+.ev-score .h { font-size: .72rem; color: var(--muted); }
+.ev-pill { display: inline-block; font-size: .68rem; font-weight: 700; padding: 1px 8px;
+  border-radius: 999px; margin-left: 6px; vertical-align: middle; }
+.ev-pill.ok { background: rgba(18,161,80,.14); color: #12A150; }
+.ev-pill.no { background: rgba(224,50,60,.14); color: #E0323C; }
+.ev-note { font-size: .84rem; color: var(--ink); line-height: 1.55; }
+.ev-note li { margin-bottom: 4px; }
+@media (max-width: 900px) { .ev-flow { grid-template-columns: 1fr 1fr; }
+  .ev-flow .st::after { display: none; } }

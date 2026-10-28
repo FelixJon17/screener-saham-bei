@@ -22,18 +22,42 @@ import streamlit as st
 PAGES = ["", "beranda", "detail", "sektor", "evaluasi", "panduan", "tentang", "profil",
          "masuk", "kelola-data", "kelola-pengguna"]
 
-# Menulis mode ke kunci tema setiap halaman di bawah alamat dasar yang sama, lalu
-# memuat ulang dengan ?dari=tema agar tamu tidak dialihkan ke halaman login.
-_JS_SET = r"""
-const pages = %s, mode = %s;
+# Kunci tema Streamlit untuk setiap halaman di bawah alamat dasar yang sama.
+_JS_KEYS = r"""
+const pages = __PAGES__;
 let base = window.location.pathname.replace(/\/+$/, "");
 const last = base.split("/").pop();
 if (pages.includes(last)) base = base.slice(0, base.length - last.length).replace(/\/+$/, "");
-for (const pg of pages) window.localStorage.setItem(`stActiveTheme-${base}/${pg}-v2`, mode);
+const keys = pages.map(pg => `stActiveTheme-${base}/${pg}-v2`);
+const MARK = "valumap-tema";
+"""
+
+# Tombol tema: tulis mode ke seluruh kunci, lalu muat ulang dengan ?dari=tema
+# agar tamu tidak dialihkan ke halaman login.
+_JS_SET = _JS_KEYS + r"""
+for (const k of keys) window.localStorage.setItem(k, __MODE__);
+window.localStorage.setItem(MARK, "1");
 const url = new URL(window.location.href);
 url.searchParams.set("dari", "tema");
 window.location.replace(url.toString());
 """
+
+# Kunjungan pertama: mode terang sebagai bawaan (tanpa ini Streamlit mengikuti
+# mode sistem operasi). Pilihan yang sudah pernah dibuat pengguna tidak diubah.
+_JS_DEFAULT = _JS_KEYS + r"""
+try {
+  const cur = window.localStorage.getItem(`stActiveTheme-${window.location.pathname}-v2`);
+  if (!window.localStorage.getItem(MARK)) {
+    window.localStorage.setItem(MARK, "1");
+    if (cur !== '"Dark"' && cur !== '"Light"') {
+      for (const k of keys) window.localStorage.setItem(k, '"Light"');
+      if (window.matchMedia("(prefers-color-scheme: dark)").matches) window.location.reload();
+    }
+  }
+} catch (e) {}
+"""
+
+KEY_DEFAULT_DONE = "_theme_default_done"
 
 LIGHT = dict(strong="#091540", text="#0E1A45", muted="#5B6B92", grid="#E9F0FC",
              line="#D5E1F5", plot_bg="#FFFFFF", hover_bg="#091540", scale_lo="#EEF4FE",
@@ -72,7 +96,8 @@ def css_overrides() -> str:
 
 def run_js(code: str) -> None:
     """Menjalankan potongan JavaScript di halaman (tanpa ruang tampilan)."""
-    st.html(f"<script>{code}</script>", unsafe_allow_javascript=True)
+    # Dibungkus blok agar const/let tiap skrip tidak bentrok di cakupan global.
+    st.html(f"<script>{{{code}}}</script>", unsafe_allow_javascript=True)
 
 
 def _request(mode: str) -> None:
@@ -84,7 +109,16 @@ def apply_pending() -> None:
     mode = st.session_state.pop(KEY_PENDING, None)
     if not mode:
         return
-    run_js(_JS_SET % (json.dumps(PAGES), json.dumps(json.dumps(mode))))
+    run_js(_JS_SET.replace("__PAGES__", json.dumps(PAGES))
+           .replace("__MODE__", json.dumps(json.dumps(mode))))
+
+
+def ensure_default() -> None:
+    """Sekali per sesi: jadikan mode terang sebagai bawaan bagi pengunjung baru."""
+    if st.session_state.get(KEY_DEFAULT_DONE):
+        return
+    st.session_state[KEY_DEFAULT_DONE] = True
+    run_js(_JS_DEFAULT.replace("__PAGES__", json.dumps(PAGES)))
 
 
 def toggle(key: str = "theme_toggle", label: bool = True) -> None:

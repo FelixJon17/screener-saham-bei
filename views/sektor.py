@@ -78,18 +78,14 @@ def render() -> None:
     # ------------------------------------------------------ tabel statistik
     with st.container(border=True):
         st.markdown("**Tabel Statistik Sektor**")
-        # Header dua tingkat: metrik (PER, PBV, ROE, DER) di atas AVG dan STD.
+        # Header dua tingkat (di tengah): metrik PER, PBV, ROE, DER di atas AVG dan STD.
         kolom = [("", "Jumlah Saham")] + [(nama, x) for nama in ("PER", "PBV", "ROE (%)", "DER")
                                            for x in ("AVG", "STD")]
-        tabel = pd.DataFrame(
-            [[r["Jumlah"]] + [r[f"{p_}{m}"] for m in ("PER", "PBV", "ROE", "DER")
-                              for p_ in ("", "Std ")] for _, r in sub_stat.iterrows()],
-            index=sub_stat.index.rename("Sektor"), columns=pd.MultiIndex.from_tuples(kolom))
-        # Kolom ber-header bertingkat diatur lewat posisi (0 = kolom Sektor).
-        st.dataframe(tabel, width="stretch", column_config={
-            i + 1: st.column_config.NumberColumn(
-                format="%d" if i == 0 else "%.2f", alignment="center" if i == 0 else "right")
-            for i in range(len(kolom))})
+        isi = [[int(r["Jumlah"])] + [r[f"{awal}{m}"] for m in ("PER", "PBV", "ROE", "DER")
+                                     for awal in ("", "Std ")] for _, r in sub_stat.iterrows()]
+        tabel = pd.DataFrame(isi, index=sub_stat.index.rename("Sektor"),
+                             columns=pd.MultiIndex.from_tuples(kolom))
+        st.html(ui.html_table(tabel, fmt={c: "{:.2f}" for c in kolom[1:]}))
         st.caption(f"AVG dan STD dari nilai hasil {ui.winsor_text(p)}. Untuk PER dan PBV, "
                    "keduanya adalah μ dan σ pada rumus Z-score.")
         st.download_button("Unduh CSV", sub_stat.to_csv().encode("utf-8"),

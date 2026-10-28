@@ -285,8 +285,7 @@ def _visual(view: pd.DataFrame) -> None:
         if sumbu == "Z-score sektor":
             fig = ui.scatter_cluster(view, "Z-PER (sektor)", "Z-PBV (sektor)",
                                      highlight=st.session_state.get(KEY_PICK))
-            fig.add_hline(y=0, line_dash="dot", line_color=config.PERI)
-            fig.add_vline(x=0, line_dash="dot", line_color=config.PERI)
+            ui.zero_lines(fig)
             fig.update_xaxes(title="Z-PER relatif sektor")
             fig.update_yaxes(title="Z-PBV relatif sektor")
         else:

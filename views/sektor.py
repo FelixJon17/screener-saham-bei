@@ -47,8 +47,8 @@ def render() -> None:
     with a.container(border=True):
         fig = ui.bar_sector(sub_stat.rename(columns={metrik: f"{metrik}_rata"}),
                             f"{metrik}_rata", f"Rata-rata {metrik} per sektor", metrik,
-                            color=ui.accent(config.ROYAL) if metrik == "PER" else config.PERI)
-        st.plotly_chart(fig, width="stretch")
+                            color=ui.accent(config.ROYAL))
+        ui.chart(fig, f"rata_rata_{metrik.lower()}_per_sektor", width="stretch")
     with b.container(border=True):
         st.markdown("**Komposisi cluster per sektor**")
         komp = (sub.groupby([config.COL_SEKTOR, "Kategori"]).size()
@@ -60,7 +60,7 @@ def render() -> None:
         fig.update_traces(marker_cornerradius=4)
         fig.update_layout(barmode="stack", xaxis_title="", xaxis_tickangle=-30,
                           xaxis=dict(categoryorder="total descending"), legend_title_text="")
-        st.plotly_chart(ui.style_fig(fig, 400), width="stretch")
+        ui.chart(ui.style_fig(fig, 400), "komposisi_cluster_per_sektor", width="stretch")
 
     # ------------------------------------------------------- diagram pencar
     with st.container(border=True):
@@ -71,7 +71,7 @@ def render() -> None:
         fig = ui.scatter_cluster(sub, config.COL_PER, config.COL_PBV, log=skala == "Log")
         fig.update_xaxes(title="PER" + (" (skala log)" if skala == "Log" else ""))
         fig.update_yaxes(title="PBV" + (" (skala log)" if skala == "Log" else ""))
-        st.plotly_chart(fig, width="stretch")
+        ui.chart(fig, "sebaran_per_terhadap_pbv", width="stretch")
         st.caption("Kategori dapat tumpang tindih pada nilai asli karena pembandingnya "
                    "rata-rata sektor masing-masing.")
 

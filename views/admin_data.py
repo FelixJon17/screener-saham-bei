@@ -122,7 +122,8 @@ def _tab_pra(p) -> None:
                            "#ABD2FA"][: len(log)]),
     ))
     with st.container(border=True):
-        st.plotly_chart(ui.style_fig(funnel, 360, legend=False), width="stretch")
+        ui.chart(ui.style_fig(funnel, 360, legend=False), "rantai_pra_pemrosesan",
+                 width="stretch")
     ui.table(log, width="stretch", hide_index=True)
 
     a, b = st.columns(2)

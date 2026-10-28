@@ -30,6 +30,7 @@ FMT_METRIK = {"WCSS": "{:.2f}", "Cluster terkecil (saham)": "{:.0f}",
               "Kelas terkecil di data uji": "{:.0f}"}
 
 WARNA_TERBAIK = "#E08A00"
+K_PEMBANDING = 4    # analisis sensitivitas: saran Elbow dan DBI
 
 
 def _k_fig(ev: pd.DataFrame, col: str, k_pakai: int, k_best: int, label_best: str,
@@ -96,8 +97,8 @@ def _view_kmeans(p) -> None:
             with kol.container(border=True, height="stretch"):
                 st.markdown(f"**{judul}**")
                 st.caption(ket)
-                st.plotly_chart(_k_fig(ev, col, reco["dipakai"], k_best, lbl, warna, fill),
-                                width="stretch", config={"displayModeBar": False})
+                ui.chart(_k_fig(ev, col, reco["dipakai"], k_best, lbl, warna, fill),
+                         judul.lower().replace(" ", "_").replace("-", "_"), width="stretch")
 
         with st.container(border=True):
             st.markdown(f"**Tabel Evaluasi K = {config.K_RANGE_NOTEBOOK}**")
@@ -125,7 +126,7 @@ def _view_rf(p) -> None:
         st.markdown("**Confusion Matrix**")
         n = len(cls.classes)
         st.caption(f"Aktual terhadap prediksi · {len(cls.X_test)} saham data uji")
-        st.plotly_chart(ui.heatmap_confusion(cls.confusion, ""), width="stretch")
+        ui.chart(ui.heatmap_confusion(cls.confusion, ""), "confusion_matrix", width="stretch")
     with b.container(border=True, height="stretch"):
         st.markdown("**Feature Importance**")
         st.caption("MDI (penurunan Gini rata-rata)")
@@ -135,7 +136,8 @@ def _view_rf(p) -> None:
         fig.update_traces(marker_cornerradius=8)
         fig.update_layout(xaxis_title="Nilai kepentingan", yaxis_title="",
                           yaxis=dict(autorange="reversed"))
-        st.plotly_chart(ui.horizontal(ui.style_fig(fig, 360, legend=False)), width="stretch")
+        ui.chart(ui.horizontal(ui.style_fig(fig, 360, legend=False)), "feature_importance",
+                 width="stretch")
 
     with st.container(border=True):
         st.markdown("**Tabel Evaluasi Tambahan**")
@@ -190,14 +192,10 @@ def _profil_tabel(r: compare.KResult) -> None:
 
 
 def _tab_banding(p) -> None:
-    reco = p.k_reco
-    kandidat = sorted({k for k in (reco.get("silhouette"), reco.get("dbi"))
-                       if k and k != p.k}) or [4]
-    alasan = {reco.get("silhouette"): "Silhouette terbaik", reco.get("dbi"): "DBI terbaik"}
-    kb = st.segmented_control(
-        "K pembanding", kandidat, default=kandidat[-1], key="sens_k",
-        format_func=lambda k: f"K = {k}" + (f" · {alasan[k]}" if k in alasan else ""))         or kandidat[-1]
-    a, b = ui.get_comparison(p.k, int(kb))
+    # Pembanding tetap K = 4: saran mayoritas metrik (Elbow dan DBI); K = 2
+    # dari Silhouette tidak dipakai karena hanya membentuk dua kategori.
+    st.markdown(f"#### K = {K_PEMBANDING} sebagai pembanding")
+    a, b = ui.get_comparison(p.k, K_PEMBANDING)
     tabel = compare.metric_table(a, b)
     menang_a = int((tabel["Lebih baik"] == f"K={a.k}").sum())
     menang_b = int((tabel["Lebih baik"] == f"K={b.k}").sum())
@@ -238,13 +236,14 @@ def _tab_banding(p) -> None:
                         color_continuous_scale=[ui.tc("scale_lo"), ui.tc("scale_hi")],
                         labels=dict(x=f"K={b.k}", y=f"K={a.k}", color="Emiten"))
         fig.update_layout(coloraxis_showscale=False, xaxis_tickangle=-20)
-        st.plotly_chart(ui.style_fig(fig, 388, legend=False), width="stretch")
+        ui.chart(ui.style_fig(fig, 388, legend=False), f"perpindahan_emiten_k{a.k}_k{b.k}",
+                 width="stretch")
 
     c1, c2 = st.columns(2)
     with c1.container(border=True):
-        st.plotly_chart(_scatter_k(p.clu.data, a), width="stretch")
+        ui.chart(_scatter_k(p.clu.data, a), f"sebaran_cluster_k{a.k}", width="stretch")
     with c2.container(border=True):
-        st.plotly_chart(_scatter_k(p.clu.data, b), width="stretch")
+        ui.chart(_scatter_k(p.clu.data, b), f"sebaran_cluster_k{b.k}", width="stretch")
 
     c1, c2 = st.columns(2)
     with c1:
@@ -354,7 +353,8 @@ def _view_gabungan(p) -> None:
                         cliponaxis=False, hovertemplate="%{x}: F1 %{y:.1f}%<extra></extra>")
             fig.update_layout(barmode="group", bargap=.35)
             fig.update_yaxes(range=[0, 110], ticksuffix="%")
-            st.plotly_chart(ui.style_fig(fig, 300), width="stretch")
+            ui.chart(ui.style_fig(fig, 300), "proporsi_kmeans_vs_f1_random_forest",
+                     width="stretch")
         with kanan:
             terbaik = max(kategori, key=lambda k: lap.loc[k, "f1-score"])
             terlemah = min(kategori, key=lambda k: lap.loc[k, "f1-score"])

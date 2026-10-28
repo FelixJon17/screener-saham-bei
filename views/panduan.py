@@ -11,32 +11,84 @@ import config
 from src import auth, ui
 
 LANGKAH = [
-    ("Input Data", "Kode Saham, Sektor, PER, PBV, ROE, dan DER setiap emiten BEI."),
-    ("Pra-Pemrosesan Data", "Buang data kosong dan PER/PBV ≤ 0; batasi nilai ekstrem di "
+    ("Input Data", "Data harus memuat Kode Saham, Sektor, PER, PBV, ROE, dan DER dari saham BEI."),
+    ("Pra-Pemrosesan Data", "Menghilangkan missing value, PER/PBV ≤ 0, membatasi nilai ekstrem di "
                   f"P{config.WINSOR_PERCENTILE}."),
-    ("Relatif sektor", "PER dan PBV diubah menjadi Z-score terhadap sektornya."),
+    ("Standardisasi Relatif Sektor", "Standardisi PER dan PBV menjadi Z-score terhadap sektornya."),
     ("Pengelompokan", "K-Means Clustering menjadi 3 kategori valuasi relatif."),
     ("Karakterisasi", "Random Forest menguji apakah ROE dan DER menjelaskan kategori."),
+    ("Evaluasi Model", "Menggunakan metrik Elbow, Silhouette, dan Davies Bouldiin Index pada K-Means Clustering"
+    "Accuracy, Precision."),
 ]
 
-GLOSARIUM = {
-    "PER (Price to Earnings Ratio)": "Harga / laba per saham. Makin rendah, makin murah "
-                                     "terhadap laba.",
-    "PBV (Price to Book Value)": "Harga / nilai buku per saham. PBV 1 = harga setara "
-                                 "nilai buku.",
-    "ROE (Return on Equity)": "Laba bersih / ekuitas (%). Efisiensi menghasilkan laba dari "
-                              "modal sendiri.",
-    "DER (Debt to Equity Ratio)": "Total utang / ekuitas. Makin tinggi, makin bergantung "
-                                  "pada utang.",
-    "Z-score relatif sektor": "Jarak dari rata-rata sektor dalam satuan simpangan baku. "
-                              "0 = setara rata-rata sektor.",
-    "Winsorizing": "Nilai di atas persentil tertentu diganti dengan nilai persentil itu "
-                   "agar angka ekstrem tidak mendominasi.",
-    "K-Means": "Algoritma pengelompokan berdasarkan jarak ke titik pusat (centroid).",
-    "Silhouette": "Seberapa khas emiten untuk cluster-nya (−1 s.d. 1).",
-    "Random Forest": "Kumpulan pohon keputusan; di sini menebak kategori hanya dari ROE "
-                     "dan DER.",
-}
+# Glosarium dari laporan skripsi, hanya istilah yang dipakai di aplikasi ini
+# (urut abjad).
+GLOSARIUM = [
+    ('Accuracy',
+     'Metrik evaluasi klasifikasi yang menunjukkan proporsi prediksi benar terhadap keseluruhan data yang dievaluasi.'),
+    ('Bursa Efek Indonesia (BEI)',
+     'Lembaga yang menyelenggarakan dan menyediakan sistem perdagangan efek di Indonesia.'),
+    ('Centroid',
+     'Titik pusat suatu cluster pada algoritma K-Means, dihitung sebagai rata-rata seluruh anggota cluster tersebut.'),
+    ('Clustering',
+     'Proses pengelompokan objek berdasarkan tingkat kemiripan karakteristik tanpa menggunakan label kelas yang telah ditentukan sebelumnya.'),
+    ('Confusion Matrix',
+     'Tabel evaluasi yang membandingkan kelas aktual dengan kelas hasil prediksi suatu model klasifikasi.'),
+    ('Davies-Bouldin Index',
+     'Metrik evaluasi clustering yang mengukur kualitas pemisahan antar-cluster, dengan nilai lebih rendah menunjukkan hasil yang lebih baik.'),
+    ('Debt to Equity Ratio (DER)',
+     'Rasio solvabilitas yang membandingkan total liabilitas perusahaan dengan total ekuitasnya.'),
+    ('Decision Tree',
+     'Model prediktif berbentuk struktur pohon yang membagi data berdasarkan ambang nilai pada setiap simpul.'),
+    ('Elbow Method',
+     'Metode penentuan jumlah cluster dengan mengamati titik ketika penurunan nilai inertia mulai melandai membentuk pola menyerupai siku.'),
+    ('Fair Value',
+     'Kondisi ketika harga pasar suatu aset dinilai telah mencerminkan nilai intrinsik atau karakteristik fundamentalnya secara wajar.'),
+    ('Feature Importance',
+     'Ukuran kuantitatif kontribusi setiap variabel terhadap proses pengambilan keputusan suatu model prediktif.'),
+    ('F1-Score',
+     'Rata-rata harmonis antara precision dan recall.'),
+    ('Gini Impurity',
+     'Ukuran ketidakmurnian suatu simpul pada pohon keputusan, bernilai nol ketika seluruh anggota simpul berasal dari satu kelas yang sama.'),
+    ('IDX Stock Screener',
+     'Fitur pada situs resmi Bursa Efek Indonesia yang memungkinkan pengguna menyaring dan mengunduh data saham berdasarkan berbagai kriteria.'),
+    ('Inertia',
+     'Jumlah kuadrat jarak antara setiap data dengan centroid cluster-nya; disebut juga within-cluster sum of squares.'),
+    ('K-Means Clustering',
+     'Algoritma clustering yang membagi data ke dalam K kelompok berdasarkan kedekatannya terhadap centroid.'),
+    ('Mean Decrease in Impurity (MDI)',
+     'Ukuran feature importance yang menjumlahkan penurunan ketidakmurnian pada seluruh simpul yang menggunakan suatu variabel, dengan pembobotan proporsi data.'),
+    ('Nilai Intrinsik',
+     'Estimasi nilai wajar suatu aset yang diperoleh dari analisis kondisi fundamental perusahaan, terlepas dari harga pasar saat ini.'),
+    ('Outlier',
+     'Data yang nilainya menyimpang secara signifikan dari pola umum sebagian besar data lain.'),
+    ('Overvalue',
+     'Kondisi ketika harga pasar suatu aset dinilai relatif lebih tinggi dibandingkan nilai intrinsik atau karakteristik fundamentalnya.'),
+    ('Precision',
+     'Proporsi prediksi positif yang benar-benar termasuk kelas tersebut.'),
+    ('Price to Book Value (PBV)',
+     'Rasio valuasi yang membandingkan harga pasar saham dengan nilai buku per saham.'),
+    ('Price to Earning Ratio (PER)',
+     'Rasio valuasi yang membandingkan harga pasar saham dengan laba per saham.'),
+    ('Random Forest',
+     'Metode ensemble learning yang membangun sejumlah pohon keputusan dan menggabungkan hasilnya melalui pemungutan suara mayoritas.'),
+    ('Recall',
+     'Proporsi data yang benar-benar termasuk suatu kelas dan berhasil diprediksi dengan benar oleh model.'),
+    ('Return on Equity (ROE)',
+     'Rasio profitabilitas yang mengukur kemampuan perusahaan menghasilkan laba bersih dari modal sendiri.'),
+    ('Sektor',
+     'Klasifikasi kelompok industri perusahaan tercatat sesuai standar IDX Industrial Classification (IDX-IC).'),
+    ('Silhouette Score',
+     'Metrik evaluasi clustering yang mengukur kesesuaian data terhadap cluster-nya sendiri dibandingkan cluster terdekat, dengan rentang nilai −1 hingga 1.'),
+    ('Standardisasi Z-Score',
+     'Transformasi data dengan mengurangi nilai data dengan rata-ratanya lalu membaginya dengan standar deviasi.'),
+    ('Stratified Sampling',
+     'Teknik pembagian data yang mempertahankan proporsi setiap kelas pada setiap bagian hasil pembagian.'),
+    ('Undervalue',
+     'Kondisi ketika harga pasar suatu aset dinilai relatif lebih rendah dibandingkan nilai intrinsik atau karakteristik fundamentalnya.'),
+    ('Winsorizing',
+     'Metode penanganan nilai ekstrem dengan mengganti nilai di luar ambang persentil tertentu ke nilai ambang tersebut, tanpa menghapus baris data.'),
+]
 
 FAQ = {
     "Apakah Relatif Rendah (Undervalue) berarti layak beli?":
@@ -62,7 +114,7 @@ FAQ = {
 def render() -> None:
     ui.page_header("Panduan", "Alur kerja, kategori, dan istilah.")
 
-    t1, t2, t3, t4 = st.tabs([":material/route: Alur Kerja", ":material/label: Kategori",
+    t1, t2, t3, t4 = st.tabs([":material/route: Alur Model", ":material/label: Kategori Cluster",
                               ":material/menu_book: Glosarium", ":material/help: FAQ"])
 
     with t1:
@@ -102,11 +154,14 @@ def render() -> None:
                         f"{ui.esc(config.LABEL_DESC[k])}</span></div>")
 
     with t3:
-        q = st.text_input("Cari istilah", placeholder="mis. silhouette",
-                          icon=":material/search:").lower()
-        for istilah, arti in GLOSARIUM.items():
-            if q and q not in istilah.lower() and q not in arti.lower():
-                continue
+        q = st.text_input("Cari Istilah", placeholder="mis. silhouette",
+                          icon=":material/search:").strip().lower()
+        # Pencarian hanya pada nama istilah, bukan isi definisinya.
+        cocok = [(i, d) for i, d in GLOSARIUM if q in i.lower()]
+        st.caption(f"{len(cocok)} dari {len(GLOSARIUM)} istilah")
+        if not cocok:
+            st.info("Istilah tidak ditemukan.", icon=":material/search_off:")
+        for istilah, arti in cocok:
             with st.expander(istilah):
                 st.write(arti)
 

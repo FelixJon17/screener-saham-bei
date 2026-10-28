@@ -7,6 +7,7 @@ hasil aktif.
 from __future__ import annotations
 
 import html
+import json
 import re
 
 import numpy as np
@@ -121,8 +122,65 @@ def sector_means(p: PipelineOutput) -> pd.DataFrame:
                 "Std DER"]]
 
 
+def chart(fig: go.Figure, nama: str, **kw):
+    """
+    st.plotly_chart dengan nama berkas unduhan PNG sesuai grafiknya (mis.
+    confusion_matrix.png) dan resolusi 2x agar tajam saat dicetak.
+    """
+    cfg = {"toImageButtonOptions": {"filename": nama, "scale": 2}, **kw.pop("config", {})}
+    return st.plotly_chart(fig, config=cfg, **kw)
+
+
 def inject_css() -> None:
     st.html(f"<style>{CSS_PATH.read_text(encoding='utf-8')}{theme.css_overrides()}</style>")
+
+
+# Unduhan PNG dari toolbar Plotly selalu berlatar putih. Tepat sebelum tombol
+# kamera dijalankan, gd.layout (dan gd.data di mode gelap) diganti salinan
+# berlatar putih dengan warna mode gelap ditukar ke padanannya di mode terang;
+# Plotly menyalin keduanya saat itu juga, lalu aslinya dikembalikan sehingga
+# grafik di layar tidak berubah.
+_JS_PNG_PUTIH = """
+if (!window.__vmPngPutih) {
+  window.__vmPngPutih = true;
+  const MAP = __MAP__;
+  const gelap = () => {
+    const m = getComputedStyle(document.querySelector(".stApp") || document.body)
+      .backgroundColor.match(/\\d+/g);
+    return !!m && 0.299 * m[0] + 0.587 * m[1] + 0.114 * m[2] < 128;
+  };
+  const tukar = (v, dark) => {
+    if (typeof v === "string") return dark ? (MAP[v.toLowerCase()] ?? v) : v;
+    if (ArrayBuffer.isView(v)) return v;
+    if (Array.isArray(v)) return v.map((x) => tukar(x, dark));
+    if (v && typeof v === "object") {
+      const o = {};
+      for (const k in v) o[k] = tukar(v[k], dark);
+      return o;
+    }
+    return v;
+  };
+  document.addEventListener("click", (ev) => {
+    const btn = ev.target.closest && ev.target.closest('.modebar-btn[data-title^="Download plot"]');
+    const gd = btn && btn.closest(".js-plotly-plot");
+    if (!gd) return;
+    const dark = gelap(), data = gd.data, layout = gd.layout;
+    const lay = tukar(layout, dark);
+    lay.paper_bgcolor = "#FFFFFF";
+    lay.plot_bgcolor = "#FFFFFF";
+    gd.layout = lay;
+    if (dark) gd.data = tukar(data, true);
+    setTimeout(() => { gd.layout = layout; gd.data = data; }, 0);
+  }, true);
+}
+"""
+
+
+def inject_png_export() -> None:
+    """Memasang pengubah latar unduhan PNG (lihat _JS_PNG_PUTIH)."""
+    peta = {theme.DARK[k].lower(): theme.LIGHT[k] for k in theme.DARK}
+    peta[config.PERI.lower()] = config.ROYAL      # accent(): periwinkle hanya di mode gelap
+    theme.run_js(_JS_PNG_PUTIH.replace("__MAP__", json.dumps(peta)))
 
 
 def tc(name: str) -> str:
@@ -199,11 +257,16 @@ def _alignment(s: pd.Series, cfg: dict) -> str | None:
 
 def table(data, column_config: dict | None = None, **kw):
     """
-    st.dataframe dengan perataan seragam di seluruh aplikasi: kolom angka
-    desimal rata kanan, angka bulat di tengah. Perataan yang sudah diisi pada
-    column_config tidak diubah.
+    Tabel seragam di seluruh aplikasi: kolom angka desimal rata kanan, angka
+    bulat di tengah, header di tengah dan tebal. Header st.dataframe digambar
+    di kanvas sehingga tidak bisa diatur lewat CSS, maka tabel tanpa pilih
+    baris (on_select) digambar sebagai HTML (html_table). Tabel dengan pilih
+    baris tetap st.dataframe; perataan yang sudah diisi pada column_config
+    tidak diubah.
     """
     df = data.data if isinstance(data, Styler) else pd.DataFrame(data)
+    if kw.get("on_select") is None:
+        return st.html(_table_html(data, df, column_config or {}, kw))
     cfg = dict(column_config or {})
     for col in df.columns:
         if not isinstance(col, str):
@@ -216,6 +279,25 @@ def table(data, column_config: dict | None = None, **kw):
     if not kw.get("hide_index") and pd.api.types.is_integer_dtype(df.index):
         cfg.setdefault("_index", {"alignment": "center"})
     return st.dataframe(data, column_config=cfg, **kw)
+
+
+def _table_html(data, df: pd.DataFrame, cfg: dict, kw: dict) -> str:
+    """Menerjemahkan argumen ui.table (column_config, Styler) ke html_table."""
+    labels, fmt = {}, {}
+    for col, c in cfg.items():
+        if isinstance(c, str):
+            labels[col] = c
+        elif c:
+            if c.get("label"):
+                labels[col] = c["label"]
+            if f := (c.get("type_config") or {}).get("format"):
+                fmt[col] = f
+    styles = {}
+    if isinstance(data, Styler):
+        data._compute()
+        styles = {k: ";".join(f"{a}:{b}" for a, b in v) for k, v in data.ctx.items() if v}
+    return html_table(df, fmt=fmt, index=not kw.get("hide_index"), labels=labels,
+                      styles=styles, height=kw.get("height"))
 
 
 def missing_note(p: PipelineOutput) -> str | None:
@@ -457,15 +539,48 @@ def mark_k(fig: go.Figure, k: float, text: str, color: str, y: float | None = No
     return fig
 
 
-def html_table(df: pd.DataFrame, fmt: dict | None = None, index: bool = True) -> str:
+def _fmt(f: str, v) -> str:
+    """Format "{:.2f}" (str.format) atau "%.2f" (printf, dari column_config)."""
+    return f % v if "{" not in f else f.format(v)
+
+
+def _decimals(v: pd.Series) -> int:
+    """Jumlah desimal yang cukup untuk satu kolom (2 sampai 4)."""
+    for d in range(2, 4):
+        if (abs(v - v.round(d)) < 1e-9).all():
+            return d
+    return 4
+
+
+def _cell(v, al: str | None, f: str | None, raw: bool = True) -> str:
+    cls = {"right": " class='r'", "center": " class='c'"}.get(al or "", "")
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return f"<td{cls}></td>"
+    if f and isinstance(v, (int, float, np.number)) and not isinstance(v, bool):
+        return f"<td{cls}>{_fmt(f, v)}</td>"
+    if isinstance(v, (float, np.floating)) and float(v).is_integer():
+        v = int(v)
+    return f"<td{cls}>{v if raw and str(v).startswith('<') else esc(v)}</td>"
+
+
+def html_table(df: pd.DataFrame, fmt: dict | None = None, index: bool = True,
+               labels: dict | None = None, styles: dict | None = None,
+               height: int | None = None, align: dict | None = None,
+               raw_html: bool = True) -> str:
     """
-    Tabel HTML dengan header di tengah, termasuk header dua tingkat (kolom
-    MultiIndex). Angka desimal rata kanan, angka bulat di tengah, teks rata kiri.
-    fmt: format per kolom (nama kolom atau tuple MultiIndex), mis. "{:.2f}".
+    Tabel HTML dengan header di tengah dan tebal, termasuk header dua tingkat
+    (kolom MultiIndex). Angka desimal rata kanan, angka bulat di tengah, teks
+    rata kiri. fmt: format per kolom (nama kolom atau tuple MultiIndex), mis.
+    "{:.2f}" atau "%.2f". labels: judul kolom pengganti. styles: CSS per sel
+    {(baris, kolom): "..."} dari Styler. height: tinggi maksimum (px), header
+    tetap terlihat saat digulir. align: perataan pengganti per kolom ("left",
+    "center", "right"). raw_html=False: teks berawalan "<" tetap di-escape
+    (untuk data unggahan pengguna).
     """
-    fmt = fmt or {}
+    fmt, labels, styles = fmt or {}, labels or {}, styles or {}
     cols = list(df.columns)
     multi = isinstance(df.columns, pd.MultiIndex)
+    esc_h = lambda c: esc(labels.get(c, c))
     head = "<thead>"
     if multi:
         head += "<tr>" + (f"<th rowspan='2'>{esc(df.index.name or '')}</th>" if index else "")
@@ -483,23 +598,40 @@ def html_table(df: pd.DataFrame, fmt: dict | None = None, index: bool = True) ->
         head += "</tr><tr>" + "".join(f"<th>{esc(c[1])}</th>" for c in cols if c[0]) + "</tr>"
     else:
         head += ("<tr>" + (f"<th>{esc(df.index.name or '')}</th>" if index else "")
-                 + "".join(f"<th>{esc(c)}</th>" for c in cols) + "</tr>")
+                 + "".join(f"<th>{esc_h(c)}</th>" for c in cols) + "</tr>")
     head += "</thead>"
 
-    def cell(c, v) -> str:
-        if isinstance(v, (int, np.integer)) or (isinstance(v, float) and float(v).is_integer()
-                                                 and c not in fmt):
-            return f"<td class='c'>{int(v)}</td>"
-        if isinstance(v, (float, np.floating)):
-            return f"<td class='r'>{fmt.get(c, '{:.2f}').format(v)}</td>"
-        return f"<td>{v if str(v).startswith('<') else esc(v)}</td>"
+    # Perataan dan format ditentukan per kolom agar satu kolom seragam.
+    plan = []
+    for j, c in enumerate(cols):
+        s, f = df.iloc[:, j], fmt.get(c)
+        if f:
+            al = "center" if f in ("%d", "{:.0f}", "{:d}") else "right"
+            al = al if pd.api.types.is_numeric_dtype(s) or s.map(
+                lambda v: isinstance(v, (int, float, np.number))).all() else _alignment(s, {})
+        else:
+            al = _alignment(s, {})
+            if al == "right" and pd.api.types.is_float_dtype(s):
+                f = f"{{:.{_decimals(s.dropna())}f}}"
+        plan.append((s.tolist(), (align or {}).get(c, al), f))
+
+    def idx(i) -> str:
+        cls = "lbl c" if isinstance(i, (int, np.integer)) else "lbl"
+        return f"<td class='{cls}'>{i if raw_html and str(i).startswith('<') else esc(i)}</td>"
+
+    def cell(r: int, j: int) -> str:
+        vals, al, f = plan[j]
+        td = _cell(vals[r], al, f, raw_html)
+        if css := styles.get((r, j)):
+            td = td.replace("<td", f"<td style='{esc(css)}'", 1)
+        return td
 
     body = "".join(
-        "<tr>" + (f"<td class='lbl'>{i if str(i).startswith('<') else esc(i)}</td>"
-                  if index else "")
-        + "".join(cell(c, r[c]) for c in cols) + "</tr>"
-        for i, r in df.iterrows())
-    return f"<div class='vt-wrap'><table class='vt'>{head}<tbody>{body}</tbody></table></div>"
+        "<tr>" + (idx(i) if index else "") + "".join(cell(r, j) for j in range(len(cols)))
+        + "</tr>" for r, i in enumerate(df.index))
+    tinggi = f" style='max-height:{int(height)}px'" if height else ""
+    return (f"<div class='vt-wrap'{tinggi}><table class='vt'>{head}<tbody>{body}</tbody>"
+            "</table></div>")
 
 
 def color_map_for(df: pd.DataFrame) -> dict:
@@ -566,7 +698,10 @@ def bar_sector(df: pd.DataFrame, value_col: str, title: str, xlab: str,
         text=[fmt_num(v) for v in d[value_col]], textposition="outside",
         hovertemplate="<b>%{y}</b><br>" + xlab + ": %{x:.2f}<extra></extra>",
     ))
-    fig.update_layout(title=title, xaxis_title=xlab, yaxis_title="")
+    # Ruang di kanan agar label angka di luar batang tidak terpotong.
+    lo, hi = min(0.0, d[value_col].min()), max(0.0, d[value_col].max())
+    fig.update_layout(title=title, xaxis_title=xlab, yaxis_title="",
+                      xaxis_range=[lo * 1.15, hi * 1.15])
     return horizontal(style_fig(fig, 440, legend=False))
 
 

@@ -223,6 +223,7 @@ h4 { font-size: 1rem !important; margin-bottom: .2rem !important; }
 .kpi-card .bar { height: 5px; border-radius: 99px; background: var(--sky-50); margin-top: 10px; overflow: hidden; }
 .kpi-card .bar span { display: block; height: 100%; background: var(--c); border-radius: 99px; }
 .kpi-card .ft { display: flex; justify-content: space-between; font-size: .72rem; color: var(--muted); margin-top: 6px; }
+.kpi-card .ft b { font-size: .8rem; font-weight: 800; color: var(--title); }
 
 .ds-bar { display: flex; align-items: center; gap: 12px; }
 .ds-bar .ic { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
@@ -357,16 +358,18 @@ h4 { font-size: 1rem !important; margin-bottom: .2rem !important; }
 /* ------------------------------------------------------------------ */
 /* Tabel HTML (ui.html_table): header di tengah, header dua tingkat      */
 /* ------------------------------------------------------------------ */
-.vt-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px;
+.vt-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 10px;
   background: var(--card); }
 .vt { width: 100%; border-collapse: collapse; font-size: .84rem; color: var(--ink); }
-.vt th { background: var(--sky-50); color: var(--muted); font-weight: 700; font-size: .74rem;
-  text-align: center; padding: 8px 10px; border-bottom: 1px solid var(--line);
+.vt th { background: var(--sky-50); color: var(--title); font-weight: 800; font-size: .8rem;
+  text-align: center; padding: 9px 10px; border-bottom: 1px solid var(--line);
   border-left: 1px solid var(--line); white-space: nowrap; }
+/* Header tetap terlihat saat tabel bertinggi tetap digulir. */
+.vt thead tr:only-child th { position: sticky; top: 0; z-index: 1; }
 /* Hanya sel paling kiri (Sektor) tanpa garis kiri; di baris header kedua sel
    pertamanya adalah AVG di bawah PER, yang tetap butuh garis pemisah. */
 .vt thead tr:first-child th:first-child { border-left: 0; }
-.vt th.grp { color: var(--title); font-size: .78rem; letter-spacing: .02em; }
+.vt th.grp { font-size: .82rem; letter-spacing: .02em; }
 .vt td { padding: 7px 12px; border-bottom: 1px solid var(--line); border-left: 1px solid var(--line);
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 .vt td:first-child { border-left: 0; }
@@ -404,3 +407,11 @@ h4 { font-size: 1rem !important; margin-bottom: .2rem !important; }
 .ev-note li { margin-bottom: 4px; }
 @media (max-width: 900px) { .ev-flow { grid-template-columns: 1fr 1fr; }
   .ev-flow .st::after { display: none; } }
+
+/* Tabel hasil screening Beranda (komponen HTML): baris dan judul kolom bisa diklik. */
+.scr-tabel .vt tbody tr { cursor: pointer; }
+.scr-tabel .vt thead th { cursor: pointer; user-select: none; }
+.scr-tabel .vt thead th:hover { color: var(--royal); }
+.scr-tabel .vt tbody tr.sel td { background: rgba(118,146,255,.18); }
+.scr-tabel .vt tbody tr.sel td:first-child { box-shadow: inset 3px 0 0 var(--royal); }
+.scr-tabel .vt td:first-child { font-weight: 700; color: var(--title); }

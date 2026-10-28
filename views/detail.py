@@ -74,7 +74,8 @@ def _interpretasi(row: pd.Series, rata: pd.Series, hasil: dict, sektor: str) -> 
     with st.container(border=True, height="stretch"):
         st.markdown("**Random Forest** · ROE & DER")
         st.html(f"<div style='margin:2px 0 4px'>{ui.badge_html(pred)}</div>")
-        st.plotly_chart(_proba_fig(hasil["probabilitas"]), width="stretch")
+        ui.chart(_proba_fig(hasil["probabilitas"]),
+                 f"probabilitas_random_forest_{row[config.COL_KODE]}", width="stretch")
         if sejalan:
             st.success("Sejalan dengan kategori K-Means.", icon=":material/check_circle:")
         else:
@@ -149,7 +150,7 @@ def render() -> None:
         ui.zero_lines(fig)
         fig.update_xaxes(title="Z-PER relatif sektor")
         fig.update_yaxes(title="Z-PBV relatif sektor")
-        st.plotly_chart(fig, width="stretch")
+        ui.chart(fig, f"posisi_cluster_{kode}", width="stretch")
         st.caption(f"★ {kode} · titik (0, 0) = rata-rata sektor")
     with kanan:
         _interpretasi(row, rata, hasil, sektor)
@@ -157,5 +158,6 @@ def render() -> None:
     # ----------------------------------------- perbandingan rata-rata sektor
     with st.container(border=True):
         st.markdown(f"**Perbandingan terhadap rata-rata sektor {sektor}**")
-        st.plotly_chart(_bar_vs_sektor(row, rata), width="stretch")
+        ui.chart(_bar_vs_sektor(row, rata), f"perbandingan_rata_rata_sektor_{kode}",
+                 width="stretch")
         st.caption(f"Rata-rata sektor dari nilai hasil {ui.winsor_text(p)} (tolok ukur Z-score).")

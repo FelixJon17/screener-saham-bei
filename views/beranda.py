@@ -25,7 +25,40 @@ import config
 from src import auth, data_loader, dataset_store, pipeline, trainer, ui
 
 KEY_PICK = "beranda_pick"
+KEY_SORT = "beranda_sort"        # (kolom, naik) untuk tabel hasil screening
 SEMUA = "Semua"
+
+# Tabel hasil screening digambar sebagai HTML agar header tebal dan di tengah
+# (header st.dataframe digambar di kanvas). Komponen ini mengirim kode saham
+# dari baris yang diklik dan nomor kolom dari header yang diklik (urutkan).
+# Scroll tabel dipertahankan selama isi tabel tidak berubah.
+_JS_TABEL = """
+export default function({ data, parentElement, setTriggerValue }) {
+  let root = parentElement.querySelector(".scr-tabel");
+  if (!root) {
+    root = document.createElement("div");
+    root.className = "scr-tabel";
+    parentElement.appendChild(root);
+  }
+  if (root._html !== data.html) {
+    root.innerHTML = data.html;
+    root._html = data.html;
+  }
+  root.querySelectorAll("tbody tr").forEach((tr) => {
+    const kode = tr.cells[0].textContent;
+    tr.classList.toggle("sel", kode === data.selected);
+    tr.onclick = () => {
+      root.querySelectorAll("tr.sel").forEach((x) => x.classList.remove("sel"));
+      tr.classList.add("sel");
+      setTriggerValue("row", kode);
+    };
+  });
+  root.querySelectorAll("thead th").forEach((th, i) => {
+    th.onclick = () => setTriggerValue("sort", i);
+  });
+}
+"""
+_TABEL = st.components.v2.component("tabel_screening", js=_JS_TABEL, isolate_styles=False)
 
 
 def _pick_point(key: str) -> None:
@@ -34,23 +67,15 @@ def _pick_point(key: str) -> None:
         st.session_state[KEY_PICK] = kode
 
 
-def _pick_row(key: str, codes: list[str]):
-    def cb() -> None:
-        rows = st.session_state[key].selection.rows
-        if rows:
-            st.session_state[KEY_PICK] = codes[rows[0]]
-    return cb
-
-
 def _hero(p, df: pd.DataFrame) -> None:
     """Banner judul halaman."""
     st.html(
         "<div class='scr-hero slim'><div class='txt'>"
-        "<div class='eyebrow'>IDX Equity Screener</div>"
+        "<div class='eyebrow'>Screener Valuasi Saham</div>"
         "<div class='ttl'>Beranda</div>"
-        "<div class='sub'>Pengelompokan valuasi saham relatif terhadap sektor</div></div>"
-        f"<div class='chips'><span>K-Means K = {p.k}</span><span>PER · PBV</span>"
-        "<span>Random Forest · ROE · DER</span></div></div>"
+        "<div class='sub'>Pengelompokan valuasi saham relatif terhadap sektor</div>"
+        "<div class='chips'><span>K-Means Clustering</span><span>PER · PBV</span>"
+        "<span>Random Forest</span><span>ROE · DER</span></div></div></div>"
     )
 
 
@@ -157,8 +182,7 @@ def _ringkasan(df: pd.DataFrame) -> None:
         "<div class='top'><span class='ic'>Σ</span><span class='lbl'>Total Saham</span></div>"
         f"<div class='val'>{len(df)} <small>emiten</small></div>"
         "<div class='bar'><span style='width:100%'></span></div>"
-        f"<div class='ft'><span>{df[config.COL_SEKTOR].nunique()} sektor IDX-IC</span>"
-        f"<span>median PER {ui.fmt_num(df[config.COL_PER].median())}</span></div></div>"
+        f"<div class='ft'><b>{df[config.COL_SEKTOR].nunique()} Sektor Saham</b></div></div>"
     ]
     for k in config.LABEL_ORDER:
         sub = df[df["Kategori"] == k]
@@ -171,8 +195,7 @@ def _ringkasan(df: pd.DataFrame) -> None:
             f"<span class='op'>{ui.esc(config.LABEL_OPS[k])}</span></div>"
             f"<div class='val'>{len(sub)} <small>saham</small></div>"
             f"<div class='bar'><span style='width:{pct:.1f}%'></span></div>"
-            f"<div class='ft'><span>{pct:.1f}% saham</span>".replace(".", ",")
-            + f"<span>median PER {ui.fmt_num(sub[config.COL_PER].median())}</span></div></div>"
+            f"<div class='ft'><b>{pct:.1f}% saham</b></div></div>".replace(".", ",")
         )
     st.html(f"<div class='kpi-grid'>{''.join(cards)}</div>")
 
@@ -204,13 +227,17 @@ def _panel_filter(df: pd.DataFrame) -> pd.DataFrame:
                + (f"<span class='n'>{aktif}</span>" if aktif else "") + "</div>")
         b.button("Reset", type="tertiary", on_click=_reset_filter, disabled=not aktif,
                  key="f_reset", width="stretch")
-        sektor = st.selectbox("Sektor", [SEMUA] + sorted(df[config.COL_SEKTOR].unique()),
-                              key="f_sektor")
-        kat_opsi = [k for k in config.LABEL_ORDER if k in df["Kategori"].unique()]
-        kategori = st.selectbox("Kategori cluster", [SEMUA] + kat_opsi, key="f_kategori",
-                                format_func=lambda k: k if k == SEMUA else ui.short(k))
-        per_lo, per_hi = _rentang("Rentang PER", "f_per")
-        pbv_lo, pbv_hi = _rentang("Rentang PBV", "f_pbv")
+        # Isian di dalam form: tabel baru berubah setelah tombol Filter ditekan.
+        with st.form("form_filter", border=False):
+            sektor = st.selectbox("Sektor", [SEMUA] + sorted(df[config.COL_SEKTOR].unique()),
+                                  key="f_sektor")
+            kat_opsi = [k for k in config.LABEL_ORDER if k in df["Kategori"].unique()]
+            kategori = st.selectbox("Kategori cluster", [SEMUA] + kat_opsi, key="f_kategori",
+                                    format_func=lambda k: k if k == SEMUA else ui.short(k))
+            per_lo, per_hi = _rentang("Rentang PER", "f_per")
+            pbv_lo, pbv_hi = _rentang("Rentang PBV", "f_pbv")
+            st.form_submit_button("Filter", type="primary", icon=":material/filter_alt:",
+                                  width="stretch")
 
     view = df
     if sektor != SEMUA:
@@ -230,27 +257,34 @@ def _tabel(view: pd.DataFrame, total: int) -> None:
         a, b = st.columns([3, 1], vertical_alignment="center")
         a.html(f"<div class='tb-head'><b>Hasil Screening</b>"
                f"<span class='cnt'>{len(view)} / {total} saham</span></div>")
-        b.caption("Klik baris untuk detail")
+        b.caption("Klik baris untuk detail, judul kolom untuk mengurutkan")
         t = view[[config.COL_KODE, config.COL_SEKTOR, config.COL_PER, config.COL_PBV,
                   config.COL_ROE, config.COL_DER, "Kategori"]].copy()
         t["Status"] = t.pop("Kategori").map(config.LABEL_OPS)
+        cols = list(t.columns)
+        labels = {config.COL_KODE: "Kode Saham", config.COL_ROE: "ROE (%)"}
+        kol, naik = st.session_state.get(KEY_SORT, (None, True))
+        if kol in cols:
+            t = t.sort_values(kol, ascending=naik, kind="stable")
+            labels[kol] = f"{labels.get(kol, kol)} {'▲' if naik else '▼'}"
         warna = {config.LABEL_OPS[k]: ui.color_of(k) for k in config.LABEL_ORDER}
-        gaya = (t.style
-                .format(precision=2, subset=[config.COL_PER, config.COL_PBV, config.COL_ROE,
-                                             config.COL_DER])
-                .map(lambda v: f"background-color:{warna.get(v, '')}2E;color:{warna.get(v, '')}",
-                     subset=["Status"]))
-        ui.table(
-            gaya, width="stretch", hide_index=True, height=430, selection_mode="single-row",
-            key="tabel_saham", row_height=36,
-            on_select=_pick_row("tabel_saham", view[config.COL_KODE].tolist()),
-            column_config={
-                config.COL_KODE: st.column_config.TextColumn("Kode Saham", pinned=True),
-                config.COL_ROE: st.column_config.NumberColumn("ROE (%)"),
-                "Status": st.column_config.TextColumn("Status", alignment="center",
-                                                      width="small"),
-            },
-        )
+        j = cols.index("Status")
+        styles = {(r, j): f"background-color:{warna.get(v, '')}2E;color:{warna.get(v, '')};"
+                          "font-weight:700" for r, v in enumerate(t["Status"])}
+        html = ui.html_table(
+            t, index=False, labels=labels, styles=styles, height=430, raw_html=False,
+            fmt={c: "{:.2f}" for c in (config.COL_PER, config.COL_PBV, config.COL_ROE,
+                                       config.COL_DER)},
+            align={config.COL_KODE: "center", "Status": "center"})
+        res = _TABEL(data={"html": html, "selected": st.session_state.get(KEY_PICK)},
+                     key="tabel_saham", on_row_change=lambda: None,
+                     on_sort_change=lambda: None)
+        if res.row:
+            st.session_state[KEY_PICK] = res.row
+        if res.sort is not None:
+            baru = cols[int(res.sort)]
+            st.session_state[KEY_SORT] = (baru, not naik if baru == kol else True)
+            st.rerun()
 
 
 def _pilihan(p, kode: str) -> None:
@@ -293,7 +327,8 @@ def _visual(view: pd.DataFrame) -> None:
                                      highlight=st.session_state.get(KEY_PICK))
             fig.update_xaxes(title="PER (skala log)")
             fig.update_yaxes(title="PBV (skala log)")
-        st.plotly_chart(fig, width="stretch", selection_mode="points", key="peta_valuasi",
+        ui.chart(fig, "plot_clustering_" + ("zscore" if sumbu == "Z-score sektor" else "per_pbv"),
+                 width="stretch", selection_mode="points", key="peta_valuasi",
                         on_select=lambda: _pick_point("peta_valuasi"))
         st.caption("Z = 0: setara rata-rata sektor · ±1: satu simpangan baku")
 

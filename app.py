@@ -14,6 +14,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 ui.inject_css()
+ui.inject_png_export()
 auth.init()
 auth.restore_session()
 auth.refresh_session()

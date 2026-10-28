@@ -109,7 +109,7 @@ def save_personal(username: str, df: pd.DataFrame, nama: str, berkas: str) -> di
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(path, index=False)
     info = {"nama": nama, "berkas": berkas, "jumlah_saham": n,
-            "waktu": datetime.now().strftime("%Y-%m-%d %H:%M")}
+            "waktu": datetime.now(config.TIMEZONE).strftime("%Y-%m-%d %H:%M")}
     db.set_setting(f"pribadi:{username}", json.dumps(info))
     db.log(username, "Unggah dataset pribadi", f"{nama} ({n} saham)")
     return info
@@ -129,7 +129,7 @@ def clear_personal(username: str) -> None:
 def save_upload(df: pd.DataFrame, label: str, berkas: str, actor: str) -> int:
     """Memvalidasi lalu menyimpan dataset global. Melempar pipeline.ArtifactError."""
     n = _validate(df)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stamp = datetime.now(config.TIMEZONE).strftime("%Y%m%d_%H%M%S")
     path = config.UPLOAD_DIR / stamp / NAMA_BERKAS
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(path, index=False)

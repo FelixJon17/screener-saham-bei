@@ -363,7 +363,9 @@ h4 { font-size: 1rem !important; margin-bottom: .2rem !important; }
 .vt th { background: var(--sky-50); color: var(--muted); font-weight: 700; font-size: .74rem;
   text-align: center; padding: 8px 10px; border-bottom: 1px solid var(--line);
   border-left: 1px solid var(--line); white-space: nowrap; }
-.vt th:first-child { border-left: 0; }
+/* Hanya sel paling kiri (Sektor) tanpa garis kiri; di baris header kedua sel
+   pertamanya adalah AVG di bawah PER, yang tetap butuh garis pemisah. */
+.vt thead tr:first-child th:first-child { border-left: 0; }
 .vt th.grp { color: var(--title); font-size: .78rem; letter-spacing: .02em; }
 .vt td { padding: 7px 12px; border-bottom: 1px solid var(--line); border-left: 1px solid var(--line);
   font-variant-numeric: tabular-nums; white-space: nowrap; }

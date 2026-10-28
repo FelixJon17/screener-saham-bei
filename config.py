@@ -1,3 +1,4 @@
+from datetime import timedelta, timezone
 from pathlib import Path
 
 # --------------------------------------------------------------------------
@@ -86,6 +87,10 @@ APP_INSTITUTION = "Teknik Informatika, Universitas Tarumanagara"
 
 APP_NAME = "ValuMap"
 APP_TAGLINE = "Screener Saham BEI"
+
+# Zona waktu seluruh catatan waktu (login, pendaftaran, unggah dataset, log).
+# Server hosting memakai UTC, sehingga waktu dikonversi eksplisit ke WIB.
+TIMEZONE = timezone(timedelta(hours=7), "WIB")
 LOGO_ICON = BASE_DIR / "assets" / "logo_icon.png"
 LOGO_WIDE = BASE_DIR / "assets" / "logo.svg"
 

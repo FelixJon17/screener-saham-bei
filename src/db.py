@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS activity (
 
 
 def now() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    """Waktu sekarang dalam WIB (config.TIMEZONE), bukan zona waktu server."""
+    return datetime.now(config.TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
 
 
 @contextmanager

@@ -169,7 +169,8 @@ def _tab_verifikasi(p) -> None:
     if p.source is not None and p.source.exists():
         st.caption(f"Dataset: {p.source.name} · "
                    f"{round(p.source.stat().st_size / 1024, 1)} KB · diubah "
-                   + pd.Timestamp(p.source.stat().st_mtime, unit="s").strftime("%Y-%m-%d %H:%M"))
+                   + pd.Timestamp(p.source.stat().st_mtime, unit="s", tz="UTC")
+                   .tz_convert(config.TIMEZONE).strftime("%Y-%m-%d %H:%M"))
 
 
 def _pilih_data(actor: str, ds) -> None:

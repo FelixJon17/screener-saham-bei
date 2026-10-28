@@ -15,9 +15,9 @@ LANGKAH = [
     ("Pra-Pemrosesan Data", "Menghilangkan missing value, PER/PBV ≤ 0, membatasi nilai ekstrem di "
                   f"P{config.WINSOR_PERCENTILE}."),
     ("Standardisasi Relatif Sektor", "Standardisi PER dan PBV menjadi Z-score terhadap sektornya."),
-    ("Pengelompokan", "K-Means Clustering menjadi 3 kategori valuasi relatif."),
-    ("Karakterisasi", "Random Forest menguji apakah ROE dan DER menjelaskan kategori."),
-    ("Evaluasi Model", "Menggunakan metrik Elbow, Silhouette, dan Davies Bouldiin Index pada K-Means Clustering"
+    ("Pengelompokkan Saham", "Perhitungan Model K-Means Clustering dan 3 kategori valuasi relatif."),
+    ("Karakterisasi Cluster", "Random Forest menguji apakah ROE dan DER menjelaskan kategori."),
+    ("Evaluasi Model", "K-Means (Elbow, Silhouette, & DBI), Random Forest (Confusion Matrix, Feature Importance, "
     "Accuracy, Precision."),
 ]
 

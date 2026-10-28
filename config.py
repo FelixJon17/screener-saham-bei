@@ -100,7 +100,7 @@ THESIS_TITLE = ("Pengelompokan Saham BEI Berdasarkan PER dan PBV Menggunakan K-M
                 "ROE dan DER")
 ABOUT_AUTHOR = "Felix Jonathan"
 ABOUT_NIM = "535230119"
-ABOUT_PRODI = "Program Studi Sarjana Teknik Informatika"
+ABOUT_PRODI = "Program Studi Teknik Informatika"
 ABOUT_FAKULTAS = "Fakultas Teknologi Informasi"
 ABOUT_UNIV = "Universitas Tarumanagara"
 PEMBIMBING_1 = "TONY, S.Kom., M.Kom., Ph.D."

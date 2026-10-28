@@ -37,7 +37,7 @@ def render() -> None:
             ("Dosen Pembimbing 2", config.PEMBIMBING_2, config.PEMBIMBING_2_INST)]
     kartu = [_orang("Penulis", config.ABOUT_AUTHOR,
                     f"NIM {ui.esc(config.ABOUT_NIM)}<br>{ui.esc(config.ABOUT_PRODI)}<br>"
-                    f"{ui.esc(config.ABOUT_FAKULTAS)}, {ui.esc(config.ABOUT_UNIV)}",
+                    f"{ui.esc(config.ABOUT_FAKULTAS)} <br>{ui.esc(config.ABOUT_UNIV)}",
                     _inisial(config.ABOUT_AUTHOR), config.ROYAL)]
     kartu += [_orang(peran, nama, ui.esc(inst), _inisial(nama), warna)
               for (peran, nama, inst), warna in zip(pemb, (config.PERI, "#12A150"))]

@@ -6,9 +6,8 @@ grafik batang, serta sebaran seluruh saham pada diagram pencar PER terhadap
 PBV yang diwarnai berdasarkan kategori valuasi, sebagai representasi visual
 mekanisme tolok ukur sektoral.
 
-Tata letak mengikuti wireframe: panel pilihan (sektor multi-pilih dan metrik
-pembanding), grafik batang, komposisi cluster per sektor, diagram pencar,
-dan tabel statistik sektor. Rata-rata PER dan PBV adalah rata-rata hasil
+Tata letak: grafik batang rata-rata PER dan PBV berdampingan, komposisi
+cluster per sektor, diagram pencar, dan tabel statistik sektor. Rata-rata PER dan PBV adalah rata-rata hasil
 winsorizing (μ), yaitu tolok ukur Z-score setiap sektor.
 """
 from __future__ import annotations
@@ -25,36 +24,26 @@ def render() -> None:
     p = ui.get_pipeline()
     df = p.table
     stat = ui.sector_means(p)
-    semua = sorted(stat.index)
 
-    # ------------------------------------------------ judul & panel pilihan
-    kiri, kanan = st.columns([2, 1], gap="medium")
-    with kiri:
-        ui.page_header("Perbandingan Sektor",
-                       f"Rata-rata PER dan PBV per sektor sebagai tolok ukur Z-score · "
-                       f"{ui.data_badge(p)}")
-    with kanan.container(border=True):
-        st.markdown("**Panel Pilihan**")
-        pilih = st.multiselect("Sektor (multi-pilih)", semua, key="sek_pilih",
-                               placeholder="Semua sektor")
-        metrik = st.selectbox("Metrik pembanding", ["PER", "PBV"], key="sek_metrik")
-    pilih = pilih or semua
-    sub_stat = stat.loc[pilih]
-    sub = df[df[config.COL_SEKTOR].isin(pilih)]
+    ui.page_header("Perbandingan Sektor",
+                   f"Rata-rata PER dan PBV per sektor sebagai tolok ukur Z-score · "
+                   f"{ui.data_badge(p)}")
 
-    # ------------------------------------------------- grafik batang rata-rata
-    a, b = st.columns(2, gap="medium")
-    with a.container(border=True):
-        fig = ui.bar_sector(sub_stat.rename(columns={metrik: f"{metrik}_rata"}),
-                            f"{metrik}_rata", f"Rata-rata {metrik} per sektor", metrik,
-                            color=ui.accent(config.ROYAL))
-        ui.chart(fig, f"rata_rata_{metrik.lower()}_per_sektor", width="stretch")
-    with b.container(border=True):
+    # ------------------------------------------- grafik batang rata-rata PER & PBV
+    for kol, metrik in zip(st.columns(2, gap="medium"), ("PER", "PBV")):
+        with kol.container(border=True):
+            fig = ui.bar_sector(stat.rename(columns={metrik: f"{metrik}_rata"}),
+                                f"{metrik}_rata", f"Rata-rata {metrik} per sektor", metrik,
+                                color=ui.accent(config.ROYAL))
+            ui.chart(fig, f"rata_rata_{metrik.lower()}_per_sektor", width="stretch")
+
+    # ------------------------------------------------ komposisi cluster per sektor
+    with st.container(border=True):
         st.markdown("**Komposisi cluster per sektor**")
-        komp = (sub.groupby([config.COL_SEKTOR, "Kategori"]).size()
+        komp = (df.groupby([config.COL_SEKTOR, "Kategori"]).size()
                 .rename("Jumlah saham").reset_index())
         fig = px.bar(komp, x=config.COL_SEKTOR, y="Jumlah saham", color="Kategori",
-                     color_discrete_map=ui.color_map_for(sub),
+                     color_discrete_map=ui.color_map_for(df),
                      category_orders={"Kategori": config.LABEL_ORDER})
         fig.for_each_trace(lambda t: t.update(name=ui.short(t.name)))
         fig.update_traces(marker_cornerradius=4)
@@ -65,10 +54,10 @@ def render() -> None:
     # ------------------------------------------------------- diagram pencar
     with st.container(border=True):
         a, b = st.columns([3, 1], vertical_alignment="center")
-        a.markdown(f"**Sebaran PER terhadap PBV** · {len(sub)} saham")
+        a.markdown(f"**Sebaran PER terhadap PBV** · {len(df)} saham")
         skala = b.segmented_control("Skala sumbu", ["Log", "Linear"], default="Log",
                                     key="sek_skala", label_visibility="collapsed") or "Log"
-        fig = ui.scatter_cluster(sub, config.COL_PER, config.COL_PBV, log=skala == "Log")
+        fig = ui.scatter_cluster(df, config.COL_PER, config.COL_PBV, log=skala == "Log")
         fig.update_xaxes(title="PER" + (" (skala log)" if skala == "Log" else ""))
         fig.update_yaxes(title="PBV" + (" (skala log)" if skala == "Log" else ""))
         ui.chart(fig, "sebaran_per_terhadap_pbv", width="stretch")
@@ -82,12 +71,12 @@ def render() -> None:
         kolom = [("", "Jumlah Saham")] + [(nama, x) for nama in ("PER", "PBV", "ROE (%)", "DER")
                                            for x in ("AVG", "STD")]
         isi = [[int(r["Jumlah"])] + [r[f"{awal}{m}"] for m in ("PER", "PBV", "ROE", "DER")
-                                     for awal in ("", "Std ")] for _, r in sub_stat.iterrows()]
-        tabel = pd.DataFrame(isi, index=sub_stat.index.rename("Sektor"),
+                                     for awal in ("", "Std ")] for _, r in stat.iterrows()]
+        tabel = pd.DataFrame(isi, index=stat.index.rename("Sektor"),
                              columns=pd.MultiIndex.from_tuples(kolom))
         st.html(ui.html_table(tabel, fmt={c: "{:.2f}" for c in kolom[1:]}))
         st.caption(f"AVG dan STD dari nilai hasil {ui.winsor_text(p)}. Untuk PER dan PBV, "
                    "keduanya adalah μ dan σ pada rumus Z-score.")
-        st.download_button("Unduh CSV", sub_stat.to_csv().encode("utf-8"),
+        st.download_button("Unduh CSV", stat.to_csv().encode("utf-8"),
                            file_name="statistik_sektor.csv", mime="text/csv",
                            icon=":material/download:")

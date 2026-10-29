@@ -29,6 +29,8 @@ theme.ensure_default()
 KEY_AUTH_MODE = "auth_mode"   # "masuk" | "daftar"
 KEY_AUTH_ROLE = "auth_role"   # "Pengguna" | "Admin"
 KEY_LANDING = "landing_login"  # True setelah tamu melihat halaman login
+KEY_LOGIN_USER = "login_user"  # isian Nama Pengguna pada form Masuk
+KEY_AUTH_SUKSES = "auth_sukses"  # pesan sesudah akun berhasil dibuat
 BARS = [26, 42, 36, 58, 50, 72, 96]
 
 LOGIN_CSS = """<style>
@@ -49,7 +51,8 @@ def _form_masuk() -> None:
                                  width="stretch") or "Pengguna"
     admin = peran == "Admin"
     with st.form("form_login", border=False):
-        u = st.text_input("Nama Pengguna", placeholder="admin@123" if admin else "user@123")
+        u = st.text_input("Nama Pengguna", placeholder="admin@123" if admin else "user@123",
+                          key=KEY_LOGIN_USER)
         p = st.text_input("Kata Sandi", type="password", placeholder="Kata Sandi")
         ok = st.form_submit_button("Masuk sebagai Admin" if admin else "Masuk",
                                    type="primary", icon=":material/arrow_forward:",
@@ -82,8 +85,12 @@ def _form_daftar() -> None:
     if daftar:
         try:
             auth.register(un, nama, pw, pw2)
-            auth.login(un, pw)
-            st.session_state.pop(KEY_AUTH_MODE, None)
+            # Akun baru tidak langsung masuk: kembali ke form Masuk dengan nama
+            # pengguna terisi, lalu pengguna login dengan kata sandinya sendiri.
+            st.session_state[KEY_AUTH_MODE] = "masuk"
+            st.session_state[KEY_AUTH_ROLE] = "Pengguna"
+            st.session_state[KEY_LOGIN_USER] = un.strip().lower()
+            st.session_state[KEY_AUTH_SUKSES] = "Akun berhasil dibuat. Silakan masuk."
             st.rerun()
         except auth.AuthError as e:
             st.error(str(e), icon=":material/error:")
@@ -130,6 +137,8 @@ def halaman_login(notice: str | None = None) -> None:
                 f"<div class='auth-title'>{judul}</div><div class='auth-sub'>{sub}</div>")
         if msg := st.session_state.pop("auth_notice", None) or notice:
             st.info(msg, icon=":material/lock:")
+        if msg := st.session_state.pop(KEY_AUTH_SUKSES, None):
+            st.success(msg, icon=":material/check_circle:")
         if daftar:
             _form_daftar()
         else:

@@ -42,7 +42,7 @@ Akun demo: `admin` / `admin123` (Administrator) dan `investor` / `investor123` (
 ## Memperbarui data
 
 - **Dataset penelitian:** ganti `Dataset September.xlsx` (atau ubah `config.DEFAULT_RAW_PATH`), lalu muat ulang aplikasi. Cache dikunci pada waktu modifikasi berkas, jadi hasil baru langsung dihitung.
-- **Dataset global (admin):** **Data & Model → Unggah dataset**, lalu unggah Excel/CSV berisi enam kolom wajib. Dataset disimpan di `data/uploads/` dan dapat diaktifkan atau dihapus di tab Riwayat.
+- **Dataset global (admin):** **Data & Model → Dataset**, lalu unggah Excel/CSV berisi enam kolom wajib. Dataset disimpan di `data/uploads/`; pada tab yang sama dataset dapat diaktifkan atau dihapus, dan setiap perubahannya tercatat di log aktivitas.
 - **Dataset pribadi (pengguna):** **Beranda → Unggah dataset**. Hasilnya hanya dipakai akun tersebut (`data/pribadi/<username>/`).
 
 ## Verifikasi konsistensi
@@ -55,7 +55,7 @@ Setiap kali hasil dihitung, `src/pipeline.verify` memeriksa:
 - setiap kategori cukup untuk split stratified;
 - tidak ada nilai kosong pada data yang dikelompokkan.
 
-Hasilnya tampil di tab **Verifikasi** pada halaman Data & Model, dan juga lewat baris perintah:
+Hasilnya dapat diperiksa lewat baris perintah:
 
 ```bash
 python export_results.py                     # dataset penelitian, data positif

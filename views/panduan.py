@@ -140,8 +140,8 @@ def render() -> None:
         if auth.is_admin():
             menu += [
                 ("Pengguna", "Kelola akun: tambah, ubah peran, reset sandi, nonaktifkan."),
-                ("Data & Model", "Data perhitungan, dataset global, pra-pemrosesan, "
-                                 "verifikasi, ekspor Excel."),
+                ("Data & Model", "Data perhitungan, dataset global beserta riwayat dan "
+                                 "aktivitasnya, pra-pemrosesan."),
             ]
         ui.table({"Menu": [m for m, _ in menu], "Fungsi": [f for _, f in menu]},
                      hide_index=True, width="stretch")

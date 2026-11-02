@@ -11,7 +11,10 @@ st.set_page_config(
     page_title=f"{config.APP_NAME} · {config.APP_TAGLINE}",
     page_icon=str(config.LOGO_ICON),
     layout="wide",
-    initial_sidebar_state="expanded",
+    # "locked": di desktop sidebar selalu terbuka, mengabaikan status "diciutkan"
+    # yang tersimpan di localStorage browser (status itu membuat logo lebar
+    # ValuMap berganti ikon kecil).
+    initial_sidebar_state="locked",
 )
 ui.inject_css()
 ui.inject_png_export()

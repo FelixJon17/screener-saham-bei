@@ -251,6 +251,24 @@ def recent_activity(limit: int = 50) -> pd.DataFrame:
                         columns=["Waktu", "Pengguna", "Aktivitas", "Keterangan"])
 
 
+AKTIVITAS_DATASET = ("Unggah dataset global", "Aktifkan dataset", "Hapus dataset",
+                     "Ganti data perhitungan")
+
+
+def dataset_activity(limit: int = 50) -> pd.DataFrame:
+    """Log perubahan dataset global dan data perhitungan (halaman Data & Model)."""
+    tanda = ",".join("?" * len(AKTIVITAS_DATASET))
+    with connect() as con:
+        rows = con.execute(
+            "SELECT ts AS Waktu, username AS Pengguna, action AS Aktivitas,"
+            "       detail AS Keterangan"
+            f" FROM activity WHERE action IN ({tanda}) ORDER BY id DESC LIMIT ?",
+            (*AKTIVITAS_DATASET, limit),
+        ).fetchall()
+    return pd.DataFrame([dict(r) for r in rows],
+                        columns=["Waktu", "Pengguna", "Aktivitas", "Keterangan"])
+
+
 def activity_per_day(days: int = 14) -> pd.DataFrame:
     with connect() as con:
         rows = con.execute(

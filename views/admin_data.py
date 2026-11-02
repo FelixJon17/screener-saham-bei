@@ -2,23 +2,31 @@
 views/admin_data.py -- Kelola Data & Model (khusus admin)
 
 Seluruh hasil dihitung langsung dari dataset (src/pipeline.py). Admin
-memilih data perhitungan (positif / seluruh data), mengunggah dataset global
-pengganti dataset penelitian, dan mengekspor hasil ke Excel. Semua perubahan
-di sini berlaku global untuk seluruh pengguna.
+memilih data perhitungan (positif / seluruh data) dan mengelola dataset global
+pengganti dataset penelitian. Semua perubahan di sini berlaku global untuk
+seluruh pengguna.
 
-Tab "Pra-pemrosesan" dan "Verifikasi" menampilkan rekonstruksi
-pra-pemrosesan notebook dan pemeriksaan konsistensi hasil.
+Tab "Dataset" berisi unggah dataset, riwayat dataset, dan log aktivitas
+perubahannya; tab "Model" menampilkan rekonstruksi pra-pemrosesan notebook.
 """
 from __future__ import annotations
+
+from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
 import config
-from src import auth, data_loader, dataset_store, db, export, pipeline, trainer, ui
+from src import auth, data_loader, dataset_store, db, pipeline, trainer, ui
 
 KEY_UPLOADER = "upload_counter"
+
+# Judul daftar baris yang dibuang per tahap pra-pemrosesan
+JUDUL_DIBUANG = {
+    "missing_value": "Data tidak lengkap",
+    "per_pbv_non_positif": "Data dengan PER atau PBV ≤ 0",
+}
 
 
 @st.dialog("Hapus dataset?", icon=":material/delete:")
@@ -33,9 +41,10 @@ def _confirm_delete(ds_id: int, nama: str) -> None:
         st.rerun()
 
 
-def _tab_impor(actor: str) -> None:
-    st.caption("Unggah dataset global (Excel/CSV: Kode Saham, Sektor, PER, PBV, ROE, DER) "
-               "untuk menggantikan dataset penelitian bagi seluruh pengguna.")
+def _unggah(actor: str) -> None:
+    st.markdown("**Unggah dataset baru**")
+    st.caption("Excel/CSV berisi Kode Saham, Sektor, PER, PBV, ROE, DER. Dataset yang "
+               "diaktifkan menggantikan dataset penelitian bagi seluruh pengguna.")
     f = st.file_uploader("Dataset", type=["xlsx", "csv"], label_visibility="collapsed",
                          key=f"uploader_{st.session_state.get(KEY_UPLOADER, 0)}")
     if not f:
@@ -80,10 +89,27 @@ def _tab_impor(actor: str) -> None:
         st.rerun()
 
 
-def _tab_riwayat(actor: str, ds) -> None:
+def _tab_dataset(actor: str, ds) -> None:
+    with st.container(border=True):
+        _unggah(actor)
+    with st.container(border=True):
+        _riwayat(actor, ds)
+    with st.container(border=True):
+        st.markdown("**Aktivitas perubahan dataset**")
+        log = db.dataset_activity()
+        if log.empty:
+            st.caption("Belum ada aktivitas.")
+        else:
+            ui.table(log, hide_index=True, width="stretch", height=300)
+
+
+def _riwayat(actor: str, ds) -> None:
     hist = db.list_datasets()
+    a, b = st.columns([2, 1], vertical_alignment="center")
+    a.markdown("**Riwayat dataset**")
     if not ds.is_default:
-        if st.button("Kembali ke dataset penelitian", icon=":material/restore:"):
+        if b.button("Kembali ke dataset penelitian", icon=":material/restore:",
+                    width="stretch"):
             dataset_store.activate(None, actor)
             ui.clear_pipeline_cache()
             st.rerun()
@@ -136,7 +162,15 @@ def _tab_pra(p) -> None:
 
     if p.sector_stats is not None:
         st.markdown("**Statistik sektor (penyebut Z-score)**")
-        ui.table(p.sector_stats.round(4), width="stretch")
+        # Header dua tingkat seperti Tabel Statistik Sektor: PER dan PBV di atas μ dan σ.
+        s = p.sector_stats
+        kolom = [("", "Jumlah Saham")] + [(m, x) for m in ("PER", "PBV")
+                                           for x in ("Rata-rata (μ)", "Standar Deviasi (σ)")]
+        tabel = pd.DataFrame(
+            [[int(r["n"]), r["mu_PER"], r["sigma_PER"], r["mu_PBV"], r["sigma_PBV"]]
+             for _, r in s.iterrows()],
+            index=s.index.rename("Sektor"), columns=pd.MultiIndex.from_tuples(kolom))
+        st.html(ui.html_table(tabel, fmt={c: "{:.4f}" for c in kolom[1:]}))
 
     st.markdown("**Data mentah sebelum pembersihan**")
     r = p.raw_summary
@@ -153,25 +187,14 @@ def _tab_pra(p) -> None:
                    "Nilai sektor di luar IDX-IC yang masih tersisa setelah koreksi: "
                    + ", ".join(r["sektor_anomali_setelah_koreksi"]))
 
-    if note := ui.missing_note(p):
-        st.info(note, icon=":material/info:")
     for nama, buang in p.pre.dropped.items():
         if len(buang):
-            with st.expander(f"Baris dibuang pada tahap: {nama} ({len(buang)})"):
+            judul = JUDUL_DIBUANG.get(nama, f"Data dibuang pada tahap {nama}")
+            with st.expander(f"{judul} ({len(buang)} Saham)"):
+                # Keterangan saham yang datanya kosong (mis. FREN) menyatu dengan tabelnya.
+                if nama == "missing_value" and (note := ui.missing_note(p)):
+                    st.caption(note)
                 ui.table(buang, width="stretch", hide_index=True)
-
-
-def _tab_verifikasi(p) -> None:
-    if p.all_checks_ok:
-        st.success("Seluruh pemeriksaan konsistensi lolos.", icon=":material/verified:")
-    else:
-        st.error("Ada pemeriksaan yang gagal.", icon=":material/error:")
-    ui.table(pd.DataFrame(p.checks), hide_index=True, width="stretch")
-    if p.source is not None and p.source.exists():
-        st.caption(f"Dataset: {p.source.name} · "
-                   f"{round(p.source.stat().st_size / 1024, 1)} KB · diubah "
-                   + pd.Timestamp(p.source.stat().st_mtime, unit="s", tz="UTC")
-                   .tz_convert(config.TIMEZONE).strftime("%Y-%m-%d %H:%M"))
 
 
 def _pilih_data(actor: str, ds) -> None:
@@ -193,74 +216,26 @@ def _pilih_data(actor: str, ds) -> None:
             st.rerun()
 
 
-def _tab_parameter(actor: str) -> None:
-    p = ui.get_pipeline(pribadi=False)
-    st.caption("Parameter perhitungan (sama dengan notebook).")
-    prm = p.cls.params
-    caps = p.cls.winsor_caps
-    rentang = (lambda v: f"{v} {caps[v + ' bawah']:.4f} s.d. {caps[v]:.4f}"
-               if f"{v} bawah" in caps else f"{v} {caps[v]:.4f}")
-    ui.table(pd.DataFrame([
-        ("Data perhitungan", f"{p.data_label} · {len(p.table)} saham"),
-        ("Koreksi sektor", ", ".join(f"{k} → {v}" for k, v in config.SECTOR_FIXES.items())),
-        ("Winsorizing PER/PBV", f"{ui.winsor_text(p)}, seluruh data"),
-        ("Standardisasi", f"Z-score per sektor, ddof={config.ZSCORE_DDOF}"),
-        ("K-Means", f"k={p.k}, n_init={p.clu.model.n_init}, "
-                    f"random_state={p.clu.model.random_state}"),
-        ("Winsorizing ROE/DER", f"{ui.winsor_text(p)}, seluruh data "
-                                f"({rentang('ROE')}; {rentang('DER')})"),
-        ("Random Forest", ", ".join(f"{k}={v}" for k, v in prm.items())),
-        ("Pembagian data", f"uji {int(config.TEST_SIZE * 100)}%, stratified, "
-                           f"random_state={config.SPLIT_RANDOM_STATE}"),
-        ("Penyetelan hiperparameter", "Tidak dilakukan (data uji dipakai sekali)"),
-    ], columns=["Parameter", "Nilai"]), hide_index=True, width="stretch")
-    if st.button("Hitung ulang", icon=":material/refresh:"):
-        ui.clear_pipeline_cache()
-        db.log(actor, "Hitung ulang hasil")
-        st.rerun()
-
-
-def _tab_ekspor() -> None:
-    p = ui.get_pipeline(pribadi=False)
-    st.caption("Seluruh hasil dalam satu berkas Excel bersheet banyak.")
-    st.download_button(
-        "Unduh Excel hasil lengkap", data=lambda: export.excel_bytes(p),
-        file_name="Hasil_Screener_Lengkap.xlsx", type="primary",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        icon=":material/table_view:", on_click="ignore",
-    )
-    st.download_button(
-        "Unduh CSV hasil clustering", p.table.to_csv(index=False).encode("utf-8"),
-        file_name="hasil_clustering.csv", mime="text/csv",
-        icon=":material/download:", on_click="ignore",
-    )
-
-
 def render() -> None:
     actor = auth.current_user()["username"]
     ds = dataset_store.active()
     p = ui.get_pipeline(pribadi=False)
 
-    ok = p.all_checks_ok
     ui.market_header(
         "Data & Model",
         f"Sumber data screener untuk seluruh pengguna · {ui.esc(ds.label)} · "
         f"{ui.esc(p.data_label)}",
         [("Emiten", str(len(p.table)), None),
+         ("Sektor", str(p.table[config.COL_SEKTOR].nunique()), None),
          ("Cluster", str(p.k), None),
-         ("Verifikasi", "Lolos" if ok else "Gagal", "#16A34A" if ok else "#DC2626"),
          ("Dataset global", str(len(db.list_datasets())), None)],
     )
     st.write("")
     _pilih_data(actor, ds)
 
-    tabs = st.tabs([":material/upload: Unggah dataset", ":material/history: Riwayat",
-                    ":material/filter_alt: Pra-pemrosesan", ":material/verified: Verifikasi",
-                    ":material/tune: Parameter", ":material/download: Ekspor"],
+    tabs = st.tabs([":material/database: Dataset", ":material/model_training: Model"],
                    key="data_tab", on_change="rerun")
-    isi = [lambda: _tab_impor(actor), lambda: _tab_riwayat(actor, ds),
-           lambda: _tab_pra(p),
-           lambda: _tab_verifikasi(p), lambda: _tab_parameter(actor), _tab_ekspor]
+    isi = [lambda: _tab_dataset(actor, ds), lambda: _tab_pra(p)]
     for tab, fn in zip(tabs, isi):
         if tab.open:
             with tab:

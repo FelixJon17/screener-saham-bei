@@ -21,7 +21,7 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (accuracy_score, classification_report, confusion_matrix,
                              f1_score, precision_score, recall_score)
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.pipeline import Pipeline
 
 import config
@@ -116,6 +116,50 @@ def build(df: pd.DataFrame, model, lower: int | None = None) -> ClassificationRe
         metrics=metrics, feature_importance=imp, params=params, winsor_caps=caps,
         format_model=fmt, notes=notes,
     )
+
+
+PEMBOBOTAN = {"balanced": "balanced", "Tanpa pembobotan": None}
+
+
+def kfold(df: pd.DataFrame, n_splits: int = config.KFOLD_SPLITS) -> pd.DataFrame:
+    """
+    Tambahan uji program: stratified k-fold untuk menguji penanganan kelas tidak
+    seimbang. Setiap fold melatih Random Forest dengan dan tanpa
+    class_weight="balanced" pada ROE/DER hasil winsorizing (kolom *_w), parameter
+    lain sama dengan model utama. Model utama (confusion matrix, Feature
+    Importance, prediksi) tetap dari pembagian 80:20.
+    Hasil: satu baris per fold per pembobotan.
+    """
+    X = df[[c + "_w" for c in config.CHARACTERIZATION_FEATURES]]
+    y = df["Kategori"]
+    classes = [c for c in config.LABEL_ORDER if c in set(y)]
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True,
+                          random_state=config.SPLIT_RANDOM_STATE)
+    rows = []
+    for fold, (tr, te) in enumerate(skf.split(X, y), start=1):
+        y_te = y.iloc[te]
+        for nama, cw in PEMBOBOTAN.items():
+            rf = RandomForestClassifier(n_estimators=config.RF_N_ESTIMATORS, class_weight=cw,
+                                        random_state=config.RANDOM_STATE)
+            pred = rf.fit(X.iloc[tr], y.iloc[tr]).predict(X.iloc[te])
+            rec = recall_score(y_te, pred, labels=classes, average=None, zero_division=0)
+            rows.append({
+                "Fold": fold, "Pembobotan": nama,
+                "Data uji": " / ".join(str(int((y_te == c).sum())) for c in classes),
+                "Accuracy": accuracy_score(y_te, pred),
+                "Precision": precision_score(y_te, pred, average="macro", zero_division=0),
+                "Recall": recall_score(y_te, pred, average="macro", zero_division=0),
+                "F1-Score": f1_score(y_te, pred, average="macro", zero_division=0),
+                **{f"Recall {c}": r for c, r in zip(classes, rec)},
+            })
+    return pd.DataFrame(rows)
+
+
+def kfold_summary(folds: pd.DataFrame) -> pd.DataFrame:
+    """Rata-rata dan simpangan baku setiap metrik per pembobotan (baris = metrik)."""
+    num = folds.drop(columns=["Fold", "Data uji"])
+    agg = num.groupby("Pembobotan", sort=False).agg(["mean", "std"]).T
+    return agg.unstack(level=1)[list(PEMBOBOTAN)]
 
 
 def predict_one(model: Pipeline, roe: float, der: float) -> dict:

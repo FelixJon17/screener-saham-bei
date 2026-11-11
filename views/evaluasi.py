@@ -24,13 +24,16 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import config
-from src import compare, ui
+from src import classification, compare, ui
 
 FMT_METRIK = {"WCSS": "{:.2f}", "Cluster terkecil (saham)": "{:.0f}",
               "Kelas terkecil di data uji": "{:.0f}"}
 
 WARNA_TERBAIK = "#E08A00"
 K_PEMBANDING = 4    # analisis sensitivitas: saran Elbow dan DBI
+# Profil cluster: variabel hasil winsorizing yang dibandingkan antar-kategori.
+PROFIL_VAR = {"PER": "PER_w", "PBV": "PBV_w", "ROE": f"{config.COL_ROE}_w",
+              "DER": f"{config.COL_DER}_w"}
 
 
 def _k_fig(ev: pd.DataFrame, col: str, k_pakai: int, k_best: int, label_best: str,
@@ -109,9 +112,108 @@ def _view_kmeans(p) -> None:
         ui.table(p.clu.centroids_z.round(4), width="stretch")
         st.caption(p.clu.label_notes[0])
 
+    _profil_cluster(p)
+
     with st.expander("Analisis Sensitivitas K", expanded=False,
                      icon=":material/compare_arrows:"):
         _tab_banding(p)
+
+def _profil_cluster(p) -> None:
+    """
+    Tambahan uji program: profil cluster sebagai grafik batang (atau garis).
+    PER, PBV, ROE, DER distandardisasi terhadap seluruh saham agar skalanya
+    sama, lalu dirata-ratakan per kategori.
+    """
+    d = p.clu.data
+    kol = list(PROFIL_VAR.values())
+    z = (d[kol] - d[kol].mean()) / d[kol].std()
+    prof = z.groupby(d["Kategori"]).mean().rename(columns={v: k for k, v in PROFIL_VAR.items()})
+    med = d.groupby("Kategori")[kol].median()
+    kategori = [k for k in config.LABEL_ORDER if k in prof.index]
+
+    with st.container(border=True):
+        a, b = st.columns([3, 1], vertical_alignment="center")
+        a.markdown("**Profil Cluster** · PER, PBV, ROE, dan DER per kategori")
+        bentuk = b.segmented_control("Bentuk grafik", ["Batang", "Garis"], default="Batang",
+                                     key="profil_bentuk", label_visibility="collapsed") or "Batang"
+        fig = go.Figure()
+        for k in kategori:
+            kw = dict(x=list(PROFIL_VAR), y=prof.loc[k].values, name=ui.tiny(k),
+                      customdata=med.loc[k].values,
+                      hovertemplate=f"<b>{ui.tiny(k)}</b> · %{{x}}<br>Rata-rata Z %{{y:+.2f}}"
+                                    "<br>Median %{customdata:.2f}<extra></extra>")
+            if bentuk == "Batang":
+                fig.add_bar(marker=dict(color=ui.color_of(k), cornerradius=6),
+                            text=[f"{v:+.2f}" for v in prof.loc[k]], textposition="outside",
+                            cliponaxis=False, **kw)
+            else:
+                fig.add_scatter(mode="lines+markers", line=dict(color=ui.color_of(k), width=2.5),
+                                marker=dict(size=9, line=dict(width=2, color=ui.tc("plot_bg"))),
+                                **kw)
+        fig.add_hline(y=0, line_width=1.2, line_color=ui.tc("line"), layer="below")
+        fig.update_layout(barmode="group", bargap=.25)
+        fig.update_xaxes(title="Variabel")
+        fig.update_yaxes(title="Rata-rata Z-score (seluruh saham)")
+        ui.chart(ui.style_fig(fig, 400), f"profil_cluster_{bentuk.lower()}", width="stretch")
+        st.caption(f"Nilai hasil {ui.winsor_text(p)} distandardisasi terhadap seluruh "
+                   f"{len(d)} saham (bukan per sektor) agar keempat variabel dapat dibandingkan "
+                   "pada satu sumbu; 0 = rata-rata seluruh saham. Arahkan kursor untuk melihat "
+                   "median nilai aslinya.")
+
+
+def _view_kfold(p) -> None:
+    """Tambahan uji program: stratified k-fold, dengan dan tanpa class_weight."""
+    folds = ui.get_kfold()
+    ring = classification.kfold_summary(folds)
+    kategori = [k for k in config.LABEL_ORDER if f"Recall {k}" in ring.index]
+    bal, tanpa = list(classification.PEMBOBOTAN)
+
+    with st.container(border=True):
+        st.markdown(f"**K-Fold Cross Validation** · stratified, k = {config.KFOLD_SPLITS}")
+        st.caption("Menguji penanganan kelas tidak seimbang: setiap fold melatih Random Forest "
+                   "dengan dan tanpa class_weight=\"balanced\", parameter lain sama. Model utama "
+                   "di atas tetap dari pembagian 80:20.")
+        c = st.columns(4)
+        for kol, m in zip(c, ["Accuracy", "Precision", "Recall", "F1-Score"]):
+            v, s = ring.loc[m, (bal, "mean")], ring.loc[m, (bal, "std")]
+            selisih = v - ring.loc[m, (tanpa, "mean")]
+            kol.metric(f"{m} (balanced)", f"{v:.4f} ± {s:.4f}", f"{selisih:+.4f} vs tanpa",
+                       delta_color="off", border=True, help="Rata-rata ± simpangan baku 5 fold"
+                                                            "; macro average.")
+
+        kiri, kanan = st.columns([1, 1.1], gap="medium")
+        with kiri:
+            st.markdown("**Recall per kelas**")
+            fig = go.Figure()
+            for nama, warna in ((bal, ui.accent(config.ROYAL)), (tanpa, ui.tc("muted"))):
+                fig.add_bar(x=[ui.tiny(k) for k in kategori],
+                            y=[ring.loc[f"Recall {k}", (nama, "mean")] for k in kategori],
+                            error_y=dict(type="data", thickness=1.2, width=5,
+                                         array=[ring.loc[f"Recall {k}", (nama, "std")]
+                                                for k in kategori]),
+                            name=nama, marker=dict(color=warna, cornerradius=6),
+                            hovertemplate=f"{nama} · %{{x}}: %{{y:.4f}}<extra></extra>")
+            fig.update_layout(barmode="group", bargap=.3)
+            fig.update_yaxes(range=[0, 1.1], title="Recall (rata-rata ± simpangan baku)")
+            ui.chart(ui.style_fig(fig, 340), "kfold_recall_per_kelas", width="stretch")
+        with kanan:
+            st.markdown("**Ringkasan 5 fold**")
+            tabel = pd.DataFrame(
+                {nama: [f"{ring.loc[m, (nama, 'mean')]:.4f} ± {ring.loc[m, (nama, 'std')]:.4f}"
+                        for m in ring.index] for nama in (bal, tanpa)},
+                index=[m.replace("Valuasi Relatif ", "") for m in ring.index])
+            tabel.index.name = "Metrik"
+            st.html(ui.html_table(tabel))
+
+        with st.expander("Hasil per fold"):
+            tampil = folds.rename(columns={f"Recall {k}": f"Recall {ui.tiny(k)}"
+                                           for k in kategori})
+            st.html(ui.html_table(tampil, index=False,
+                                  fmt={c: "{:.4f}" for c in tampil.columns[3:]}))
+            st.caption("Data uji = jumlah saham " + " / ".join(ui.tiny(k) for k in kategori)
+                       + " pada fold tersebut. Pembagian stratified menjaga proporsi kelas tiap "
+                         "fold sama dengan data asli.")
+
 
 def _view_rf(p) -> None:
     m, cls = p.cls.metrics, p.cls
@@ -150,6 +252,8 @@ def _view_rf(p) -> None:
         ui.table(rep.round(4), width="stretch", column_config={
             "precision": "Precision", "recall": "Recall", "f1-score": "F1-Score",
             "support": st.column_config.NumberColumn("Support", format="%d")})
+
+    _view_kfold(p)
 
     st.caption("Label berasal dari clustering PER dan PBV, Random Forest menggunakan ROE dan DER")
 

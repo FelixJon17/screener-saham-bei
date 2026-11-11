@@ -8,7 +8,7 @@ Felix Jonathan — 535230119 — Teknik Informatika, Universitas Tarumanagara
 
 ```
 PYTHON/
-├── Dataset September.xlsx                 dataset penelitian (Kode, Sektor, PER, PBV, ROE, DER)
+├── Dataset Oktober.xlsx                   dataset penelitian (Kode, Sektor, PER, PBV, ROE, DER)
 ├── 535230119_SkripsiFelix.ipynb           notebook (mengikuti Bab III proposal)
 └── app.py, config.py, src/, views/, ...   aplikasi screener
 ```
@@ -17,9 +17,9 @@ Aplikasi **menghitung seluruh hasil langsung dari dataset** dengan prosedur yang
 
 | | Notebook | Aplikasi |
 |---|---|---|
-| Silhouette / DBI (K = 3) | 0,6731 / 0,7969 | 0,6731 / 0,7969 |
-| Accuracy / F1-macro RF (data uji) | 0,6905 / 0,4687 | 0,6905 / 0,4687 |
-| Jumlah per label | 511 / 45 / 71 | 511 / 45 / 71 |
+| Silhouette / DBI (K = 3) | 0,6559 / 0,8104 | 0,6559 / 0,8104 |
+| Accuracy / F1-macro RF (data uji) | 0,7381 / 0,5538 | 0,7381 / 0,5538 |
+| Jumlah per label | 507 / 54 / 66 | 507 / 54 / 66 |
 
 ## Konfigurasi data
 
@@ -41,7 +41,7 @@ Akun demo: `admin` / `admin123` (Administrator) dan `investor` / `investor123` (
 
 ## Memperbarui data
 
-- **Dataset penelitian:** ganti `Dataset September.xlsx` (atau ubah `config.DEFAULT_RAW_PATH`), lalu muat ulang aplikasi. Cache dikunci pada waktu modifikasi berkas, jadi hasil baru langsung dihitung.
+- **Dataset penelitian:** ganti `Dataset Oktober.xlsx` (atau ubah `config.DEFAULT_RAW_PATH`), lalu muat ulang aplikasi. Cache dikunci pada waktu modifikasi berkas, jadi hasil baru langsung dihitung.
 - **Dataset global (admin):** **Data & Model → Dataset**, lalu unggah Excel/CSV berisi enam kolom wajib. Dataset disimpan di `data/uploads/`; pada tab yang sama dataset dapat diaktifkan atau dihapus, dan setiap perubahannya tercatat di log aktivitas.
 - **Dataset pribadi (pengguna):** **Beranda → Unggah dataset**. Hasilnya hanya dipakai akun tersebut (`data/pribadi/<username>/`).
 
@@ -86,6 +86,6 @@ python export_results.py --data semua        # seluruh data
 ## Catatan
 
 - **Versi scikit-learn.** Gunakan versi yang sama dengan notebook (`scikit-learn>=1.9,<1.10`, sesuai `requirements.txt`) agar hasil identik.
-- **Pemilihan K = 3** mengikuti proposal 3.1.4: dipakai karena Silhouette 0,6731 ≥ 0,51, walaupun Silhouette terbaik di K = 2 dan DBI terbaik di K = 4. Keduanya ditampilkan sebagai analisis sensitivitas di Evaluasi Model.
-- **Label "Valuasi Relatif Sedang"** pada data September berisi saham dengan PER sangat tinggi (median 148) tetapi PBV mendekati rata-rata sektor.
+- **Pemilihan K = 3** mengikuti proposal 3.1.4: dipakai karena Silhouette 0,6559 ≥ 0,51, walaupun Silhouette terbaik di K = 2 dan DBI terbaik di K = 4. Keduanya ditampilkan sebagai analisis sensitivitas di Evaluasi Model.
+- **Label "Valuasi Relatif Sedang"** pada dataset penelitian berisi saham dengan PER sangat tinggi (median 128,6) tetapi PBV mendekati rata-rata sektor.
 - Sesi login disimpan sebagai cookie bertanda tangan HMAC selama 7 hari (diset lewat JavaScript, bukan HttpOnly), tanpa HTTPS bawaan dan tanpa pemulihan kata sandi lewat surel.

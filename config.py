@@ -16,7 +16,7 @@ DATA_MODES = {
     DATA_POSITIF: "Data positif (PER > 0 dan PBV > 0)",
     DATA_SEMUA: "Seluruh data (kecuali nilai kosong)",
 }
-DEFAULT_RAW_PATH = BASE_DIR / "Dataset September.xlsx"   # dataset penelitian
+DEFAULT_RAW_PATH = BASE_DIR / "Dataset Oktober.xlsx"    # dataset penelitian
 
 # --------------------------------------------------------------------------
 # Skema kolom (sama dengan notebook)
@@ -56,6 +56,7 @@ RANDOM_STATE = 42
 TEST_SIZE = 0.20                # train_test_split(..., stratify=y, random_state=42)
 SPLIT_RANDOM_STATE = 42
 RF_N_ESTIMATORS = 100           # class_weight="balanced", parameter lain bawaan, tanpa tuning
+KFOLD_SPLITS = 5                # stratified k-fold, uji tambahan kelas tidak seimbang
 
 IDX_IC_SECTORS = [
     "Energy",

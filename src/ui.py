@@ -60,6 +60,7 @@ def get_pipeline(pribadi: bool = True) -> PipelineOutput:
 def clear_pipeline_cache() -> None:
     _pipeline.clear()
     _comparison.clear()
+    _kfold.clear()
 
 
 @st.cache_resource(show_spinner="Menghitung K-Means dan Random Forest untuk kedua K…",
@@ -75,6 +76,18 @@ def _comparison(path: str, version: float, mode: str, ka: int, kb: int):
 def get_comparison(ka: int = 3, kb: int = 4):
     ds = active_set()
     return _comparison(str(ds.path), ds.version, dataset_store.data_mode(), ka, kb)
+
+
+@st.cache_resource(show_spinner="Menjalankan k-fold cross validation…", max_entries=4)
+def _kfold(path: str, version: float, mode: str) -> pd.DataFrame:
+    from src import classification
+    return classification.kfold(_pipeline(path, version, mode).clu.data)
+
+
+def get_kfold() -> pd.DataFrame:
+    """Hasil stratified k-fold per fold; kunci cache sama dengan get_pipeline()."""
+    ds = active_set()
+    return _kfold(str(ds.path), ds.version, dataset_store.data_mode())
 
 
 # --------------------------------------------------------------------------

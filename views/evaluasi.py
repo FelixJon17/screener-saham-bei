@@ -18,6 +18,7 @@ Halaman ini terbuka untuk semua akun yang sudah masuk (lihat app.py).
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -118,6 +119,84 @@ def _view_kmeans(p) -> None:
                      icon=":material/compare_arrows:"):
         _tab_banding(p)
 
+def _rgba(hex_color: str, alpha: float) -> str:
+    h = hex_color.lstrip("#")
+    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"
+
+
+def _posisi_label(prof: pd.DataFrame, k: str) -> list[str]:
+    """
+    Posisi label angka pada mode Garis agar label antar-kategori tidak bertumpuk:
+    nilai tertinggi di atas titik, terendah di bawah, nilai tengah di sisi yang
+    lebih jauh dari tetangganya.
+    """
+    pos = []
+    for var in prof.columns:
+        col, v = prof[var], prof.loc[k, var]
+        if v == col.max():
+            pos.append("top center")
+        elif v == col.min():
+            pos.append("bottom center")
+        else:
+            pos.append("bottom center" if col.max() - v < v - col.min() else "top center")
+    return pos
+
+
+def _profil_fig(prof: pd.DataFrame, med: pd.DataFrame, kategori: list[str],
+                bentuk: str) -> go.Figure:
+    """Grafik Profil Cluster: Batang, Garis (halus + label nilai), atau Jaring."""
+    var = list(PROFIL_VAR)
+    hover = ("<b>{k}</b> · %{{{x}}}<br>Rata-rata Z %{{{y}:+.2f}}"
+             "<br>Median %{{customdata:.2f}}<extra></extra>")
+    fig = go.Figure()
+    for k in kategori:
+        warna, nilai = ui.color_of(k), prof.loc[k].values
+        if bentuk == "Jaring":
+            # Poligon ditutup kembali ke variabel pertama.
+            fig.add_scatterpolar(
+                r=[*nilai, nilai[0]], theta=[*var, var[0]], name=ui.tiny(k),
+                customdata=[*med.loc[k].values, med.loc[k].values[0]],
+                mode="lines+markers", fill="toself", fillcolor=_rgba(warna, .12),
+                line=dict(color=warna, width=2.5), marker=dict(size=7, color=warna),
+                hovertemplate=hover.format(k=ui.tiny(k), x="theta", y="r"))
+            continue
+        kw = dict(x=var, y=nilai, name=ui.tiny(k), customdata=med.loc[k].values,
+                  hovertemplate=hover.format(k=ui.tiny(k), x="x", y="y"),
+                  text=[f"{v:+.2f}" for v in nilai], cliponaxis=False)
+        if bentuk == "Batang":
+            fig.add_bar(marker=dict(color=warna, cornerradius=6), textposition="outside", **kw)
+        else:
+            fig.add_scatter(mode="lines+markers+text",
+                            line=dict(color=warna, width=3, shape="spline", smoothing=.8),
+                            marker=dict(size=9, color=warna,
+                                        line=dict(width=2, color=ui.tc("plot_bg"))),
+                            textposition=_posisi_label(prof.loc[kategori], k),
+                            textfont=dict(size=11, color=warna), **kw)
+
+    if bentuk == "Jaring":
+        fig = ui.style_fig(fig, 440)
+        lo, hi = float(prof.values.min()), float(prof.values.max())
+        fig.update_layout(polar=dict(
+            bgcolor="rgba(0,0,0,0)",
+            radialaxis=dict(range=[np.floor(lo) - .5, np.ceil(hi)], angle=90,
+                            gridcolor=ui.tc("grid"), linecolor=ui.tc("grid"),
+                            tickfont=dict(size=9, color=ui.tc("muted")), showline=False),
+            angularaxis=dict(gridcolor=ui.tc("grid"), linecolor=ui.tc("line"),
+                             tickfont=dict(size=12, color=ui.tc("text")))))
+        return fig
+
+    fig.add_hline(y=0, line_width=1.2, line_color=ui.tc("line"), layer="below",
+                  line_dash="dot" if bentuk == "Garis" else "solid")
+    fig.update_layout(barmode="group", bargap=.25)
+    fig.update_xaxes(title="Variabel")
+    fig.update_yaxes(title="Rata-rata Z-score (seluruh saham)")
+    fig = ui.style_fig(fig, 400)
+    if bentuk == "Garis":
+        fig.update_xaxes(showgrid=False)
+        fig.update_layout(margin=dict(l=24, r=24))   # label di tepi PER/DER tidak terpotong
+    return fig
+
+
 def _profil_cluster(p) -> None:
     """
     Tambahan uji program: profil cluster sebagai grafik batang (atau garis).
@@ -134,33 +213,10 @@ def _profil_cluster(p) -> None:
     with st.container(border=True):
         a, b = st.columns([3, 1], vertical_alignment="center")
         a.markdown("**Profil Cluster** · PER, PBV, ROE, dan DER per kategori")
-        bentuk = b.segmented_control("Bentuk grafik", ["Batang", "Garis"], default="Batang",
-                                     key="profil_bentuk", label_visibility="collapsed") or "Batang"
-        fig = go.Figure()
-        for k in kategori:
-            kw = dict(x=list(PROFIL_VAR), y=prof.loc[k].values, name=ui.tiny(k),
-                      customdata=med.loc[k].values,
-                      hovertemplate=f"<b>{ui.tiny(k)}</b> · %{{x}}<br>Rata-rata Z %{{y:+.2f}}"
-                                    "<br>Median %{customdata:.2f}<extra></extra>")
-            if bentuk == "Batang":
-                fig.add_bar(marker=dict(color=ui.color_of(k), cornerradius=6),
-                            text=[f"{v:+.2f}" for v in prof.loc[k]], textposition="outside",
-                            cliponaxis=False, **kw)
-            else:
-                # Garis bertangga (step) tanpa titik, berpindah di tengah antar-variabel.
-                fig.add_scatter(mode="lines", line=dict(color=ui.color_of(k), width=2,
-                                                        shape="hvh"), **kw)
-        fig.add_hline(y=0, line_width=1.2, line_color=ui.tc("line"), layer="below")
-        fig.update_layout(barmode="group", bargap=.25)
-        fig.update_xaxes(title="Variabel")
-        fig.update_yaxes(title="Rata-rata Z-score (seluruh saham)")
-        fig = ui.style_fig(fig, 400)
-        if bentuk == "Garis":
-            # Gaya minimal: hanya garis grid horizontal, tanpa garis sumbu dan judul sumbu.
-            fig.update_xaxes(title=None, showgrid=False, showline=False, ticks="", zeroline=False)
-            fig.update_yaxes(title=None, showline=False, ticks="", zeroline=False,
-                             showticklabels=False)
-            fig.update_layout(margin=dict(l=24, r=24))   # label PER/DER di tepi tidak terpotong
+        bentuk = b.segmented_control("Bentuk grafik", ["Batang", "Garis", "Jaring"],
+                                     default="Batang", key="profil_bentuk",
+                                     label_visibility="collapsed") or "Batang"
+        fig = _profil_fig(prof, med, kategori, bentuk)
         ui.chart(fig, f"profil_cluster_{bentuk.lower()}", width="stretch")
         st.caption(f"Nilai hasil {ui.winsor_text(p)} distandardisasi terhadap seluruh "
                    f"{len(d)} saham (bukan per sektor) agar keempat variabel dapat dibandingkan "

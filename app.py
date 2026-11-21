@@ -55,8 +55,9 @@ def _form_masuk() -> None:
     admin = peran == "Admin"
     with st.form("form_login", border=False):
         u = st.text_input("Nama Pengguna", placeholder="admin@123" if admin else "user@123",
-                          key=KEY_LOGIN_USER)
-        p = st.text_input("Kata Sandi", type="password", placeholder="Kata Sandi")
+                          key=KEY_LOGIN_USER, autocomplete="username")
+        p = st.text_input("Kata Sandi", type="password", placeholder="Kata Sandi",
+                          autocomplete="current-password")
         ok = st.form_submit_button("Masuk sebagai Admin" if admin else "Masuk",
                                    type="primary", icon=":material/arrow_forward:",
                                    icon_position="right", width="stretch")
@@ -77,11 +78,13 @@ def _form_daftar() -> None:
     with st.form("form_daftar", border=False):
         nama = st.text_input("Nama lengkap", placeholder="Nama Anda")
         un = st.text_input("Nama pengguna", placeholder="huruf kecil, angka, . atau _",
-                           help="3–20 karakter: huruf kecil, angka, titik, garis bawah.")
+                           help="3–20 karakter: huruf kecil, angka, titik, garis bawah.",
+                           autocomplete="username")
         a, b = st.columns(2)
-        pw = a.text_input("Kata sandi", type="password",
+        pw = a.text_input("Kata sandi", type="password", autocomplete="new-password",
                           placeholder=f"Min. {config.PASSWORD_MIN_LENGTH} karakter")
-        pw2 = b.text_input("Ulangi kata sandi", type="password", placeholder="Ulangi")
+        pw2 = b.text_input("Ulangi kata sandi", type="password", placeholder="Ulangi",
+                           autocomplete="new-password")
         daftar = st.form_submit_button("Buat akun", type="primary",
                                        icon=":material/arrow_forward:", icon_position="right",
                                        width="stretch")

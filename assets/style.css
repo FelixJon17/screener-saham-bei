@@ -340,6 +340,8 @@ h4 { font-size: 1rem !important; margin-bottom: .2rem !important; }
 [data-testid="stLogoLink"]:hover { opacity: .85; }
 .st-key-auth { max-width: 440px; margin: 0 auto; padding: 32px 24px; }
 .st-key-auth div[data-testid="stTextInput"] input { min-height: 44px; }
+/* Sembunyikan petunjuk bawaan "Press Enter to submit form" di dalam kolom isian */
+[data-testid="InputInstructions"] { display: none !important; }
 .st-key-auth div[data-testid="stFormSubmitButton"] button { min-height: 48px; font-weight: 700;
   font-size: 1rem; box-shadow: 0 8px 22px rgba(27, 44, 193, .28); }
 .st-key-auth div[data-testid="stFormSubmitButton"] button p { font-weight: 700; font-size: 1rem; }

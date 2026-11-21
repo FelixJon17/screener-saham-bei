@@ -147,14 +147,21 @@ def _profil_cluster(p) -> None:
                             text=[f"{v:+.2f}" for v in prof.loc[k]], textposition="outside",
                             cliponaxis=False, **kw)
             else:
-                fig.add_scatter(mode="lines+markers", line=dict(color=ui.color_of(k), width=2.5),
-                                marker=dict(size=9, line=dict(width=2, color=ui.tc("plot_bg"))),
-                                **kw)
+                # Garis bertangga (step) tanpa titik, berpindah di tengah antar-variabel.
+                fig.add_scatter(mode="lines", line=dict(color=ui.color_of(k), width=2,
+                                                        shape="hvh"), **kw)
         fig.add_hline(y=0, line_width=1.2, line_color=ui.tc("line"), layer="below")
         fig.update_layout(barmode="group", bargap=.25)
         fig.update_xaxes(title="Variabel")
         fig.update_yaxes(title="Rata-rata Z-score (seluruh saham)")
-        ui.chart(ui.style_fig(fig, 400), f"profil_cluster_{bentuk.lower()}", width="stretch")
+        fig = ui.style_fig(fig, 400)
+        if bentuk == "Garis":
+            # Gaya minimal: hanya garis grid horizontal, tanpa garis sumbu dan judul sumbu.
+            fig.update_xaxes(title=None, showgrid=False, showline=False, ticks="", zeroline=False)
+            fig.update_yaxes(title=None, showline=False, ticks="", zeroline=False,
+                             showticklabels=False)
+            fig.update_layout(margin=dict(l=24, r=24))   # label PER/DER di tepi tidak terpotong
+        ui.chart(fig, f"profil_cluster_{bentuk.lower()}", width="stretch")
         st.caption(f"Nilai hasil {ui.winsor_text(p)} distandardisasi terhadap seluruh "
                    f"{len(d)} saham (bukan per sektor) agar keempat variabel dapat dibandingkan "
                    "pada satu sumbu; 0 = rata-rata seluruh saham. Arahkan kursor untuk melihat "

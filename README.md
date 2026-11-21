@@ -39,6 +39,16 @@ python -m streamlit run app.py
 
 Akun demo: `admin` / `admin123` (Administrator) dan `investor` / `investor123` (Pengguna). Basis data akun dibuat otomatis di `data/app.db` (tidak ikut di-commit). Saat di-hosting, isi `ADMIN_PASSWORD` (dan opsional `INVESTOR_PASSWORD`) di Streamlit Secrets agar kata sandi demo tidak berlaku.
 
+### Basis data saat di-hosting
+
+Berkas di Streamlit Community Cloud terhapus setiap kali aplikasi di-reboot atau tertidur, sehingga `data/app.db` ikut hilang. Agar akun, log aktivitas, pengaturan, dan dataset unggahan tetap tersimpan, isi `DATABASE_URL` di Streamlit Secrets dengan alamat PostgreSQL (mis. Neon atau Supabase, paket gratis):
+
+```toml
+DATABASE_URL = "postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require"
+```
+
+Tabel dibuat otomatis saat aplikasi pertama kali berjalan. Tanpa `DATABASE_URL`, aplikasi memakai SQLite di `data/app.db` seperti biasa. Isi CSV dataset unggahan juga disimpan di basis data (tabel `blobs`) dan ditulis ulang ke `data/` bila berkasnya hilang.
+
 ## Memperbarui data
 
 - **Dataset penelitian:** ganti `Dataset Oktober.xlsx` (atau ubah `config.DEFAULT_RAW_PATH`), lalu muat ulang aplikasi. Cache dikunci pada waktu modifikasi berkas, jadi hasil baru langsung dihitung.

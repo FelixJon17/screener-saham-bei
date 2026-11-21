@@ -11,6 +11,10 @@ Urutan prioritas dataset untuk seorang pengguna:
      ada yang diaktifkan. Riwayatnya di tabel `datasets`.
   3. Dataset penelitian bawaan (config.DEFAULT_RAW_PATH).
 
+Isi CSV dataset pribadi dan global juga disimpan di basis data (tabel blobs),
+karena berkas di Streamlit Community Cloud hilang setiap kali server di-reset.
+Bila berkasnya hilang, berkas ditulis ulang dari basis data (_ensure_file).
+
 Konfigurasi data perhitungan ("positif" / "semua") diatur admin dan berlaku
 untuk semua dataset.
 """
@@ -53,6 +57,21 @@ class ActiveSet:
         return self.path.stat().st_mtime if self.path.exists() else 0.0
 
 
+def _ensure_file(path: Path, key: str) -> bool:
+    """Menulis ulang berkas dataset dari basis data bila berkasnya sudah hilang."""
+    if not path.is_file() and (isi := db.get_blob(key)):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(isi, encoding="utf-8")
+    return path.is_file()
+
+
+def _simpan(df: pd.DataFrame, path: Path, key: str) -> None:
+    """Menyimpan dataset sebagai berkas CSV sekaligus salinannya di basis data."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(path, index=False)
+    db.put_blob(key, path.read_text(encoding="utf-8"))
+
+
 def active(username: str | None = None) -> ActiveSet:
     """Dataset yang dipakai; dataset pribadi `username` (bila ada) didahulukan."""
     if username and (info := personal(username)):
@@ -61,7 +80,7 @@ def active(username: str | None = None) -> ActiveSet:
     raw = db.get_setting(KEY_ACTIVE)
     if raw:
         row = db.get_dataset(int(raw))
-        if row and Path(row["stored_path"]).is_file():
+        if row and _ensure_file(Path(row["stored_path"]), f"dataset:{row['id']}"):
             return ActiveSet(id=row["id"], path=Path(row["stored_path"]),
                              label=row["filename"], uploaded_by=row["uploaded_by"],
                              uploaded_at=row["uploaded_at"])
@@ -97,7 +116,7 @@ def personal_path(username: str) -> Path:
 def personal(username: str) -> dict | None:
     """Info dataset pribadi pengguna, atau None bila belum ada/berkasnya hilang."""
     raw = db.get_setting(f"pribadi:{username}")
-    if not raw or not personal_path(username).is_file():
+    if not raw or not _ensure_file(personal_path(username), f"pribadi:{username}"):
         return None
     return json.loads(raw)
 
@@ -105,9 +124,7 @@ def personal(username: str) -> dict | None:
 def save_personal(username: str, df: pd.DataFrame, nama: str, berkas: str) -> dict:
     """Memvalidasi lalu menyimpan dataset pribadi. Melempar pipeline.ArtifactError."""
     n = _validate(df)
-    path = personal_path(username)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(path, index=False)
+    _simpan(df, personal_path(username), f"pribadi:{username}")
     info = {"nama": nama, "berkas": berkas, "jumlah_saham": n,
             "waktu": datetime.now(config.TIMEZONE).strftime("%Y-%m-%d %H:%M")}
     db.set_setting(f"pribadi:{username}", json.dumps(info))
@@ -117,6 +134,7 @@ def save_personal(username: str, df: pd.DataFrame, nama: str, berkas: str) -> di
 
 def clear_personal(username: str) -> None:
     db.set_setting(f"pribadi:{username}", None)
+    db.delete_blob(f"pribadi:{username}")
     folder = personal_path(username).parent.resolve()
     if PRIBADI_DIR.resolve() in folder.parents:
         shutil.rmtree(folder, ignore_errors=True)
@@ -131,10 +149,9 @@ def save_upload(df: pd.DataFrame, label: str, berkas: str, actor: str) -> int:
     n = _validate(df)
     stamp = datetime.now(config.TIMEZONE).strftime("%Y%m%d_%H%M%S")
     path = config.UPLOAD_DIR / stamp / NAMA_BERKAS
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(path, index=False)
     label = label.strip() or Path(berkas).stem
     ds_id = db.add_dataset(label, str(path), n, actor)
+    _simpan(df, path, f"dataset:{ds_id}")
     db.log(actor, "Unggah dataset global", f"{label} ({n} saham)")
     return ds_id
 
@@ -156,4 +173,5 @@ def remove(dataset_id: int, actor: str) -> None:
     if config.UPLOAD_DIR.resolve() in folder.parents:
         shutil.rmtree(folder, ignore_errors=True)
     db.delete_dataset(dataset_id)
+    db.delete_blob(f"dataset:{dataset_id}")
     db.log(actor, "Hapus dataset", row["filename"])

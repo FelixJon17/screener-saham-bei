@@ -24,3 +24,6 @@ Thumbs.db
 
 # Berkas keluaran Claude (draf dokumen, PPT): tidak perlu ada di repositori
 Claude outputs/
+
+# Rahasia lokal (DATABASE_URL, kata sandi)
+.streamlit/secrets.toml
